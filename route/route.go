@@ -1,6 +1,7 @@
 package route
 
 import (
+	"gouas/app/model"
 	"gouas/app/repository"
 	"gouas/app/service"
 	"gouas/helper"
@@ -53,11 +54,12 @@ func SetupRoutes(app *fiber.App) {
 	// 1. Init Dependencies (Manual Injection)
 	authRepo := repository.NewAuthRepository()
 	userRepo := repository.NewUserRepository()
+	achRepo := repository.NewAchievementRepository() // Dependency Baru Tahap 5
 
 	// Service Initialization
 	authService := service.NewAuthService(authRepo)
-	// UserService butuh authRepo juga untuk fitur Create User
 	userService := service.NewUserService(userRepo, authRepo)
+	achService := service.NewAchievementService(achRepo) // Service Baru Tahap 5
 
 	// 2. Group API
 	api := app.Group("/api/v1")
@@ -113,6 +115,65 @@ func SetupRoutes(app *fiber.App) {
 			return helper.ErrorResponse(c, fiber.StatusNotFound, "User not found")
 		}
 		return helper.SuccessResponse(c, "User profile retrieved", user)
+	})
+
+	// ================= ACHIEVEMENT ROUTES (MAHASISWA) =================
+	// Middleware: Protected Token
+	achievements := api.Group("/achievements", middleware.Protected())
+
+	// POST /api/v1/achievements (Create Draft) - Permission: achievement:create
+	achievements.Post("/", middleware.PermissionCheck("achievement:create"), func(c *fiber.Ctx) error {
+		var req model.MongoAchievement
+		// Parsing JSON Body (untuk field dinamis details dsb)
+		if err := c.BodyParser(&req); err != nil {
+			return helper.ErrorResponse(c, fiber.StatusBadRequest, "Invalid body")
+		}
+
+		// Ambil User ID dari Token
+		userToken := c.Locals("user").(*jwt.Token)
+		claims := userToken.Claims.(jwt.MapClaims)
+		userID, _ := uuid.Parse(claims["user_id"].(string))
+
+		result, err := achService.CreateDraft(userID, req)
+		if err != nil {
+			return helper.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return helper.SuccessResponse(c, "Achievement created (draft)", result)
+	})
+
+	// GET /api/v1/achievements (List Own Achievements) - Permission: achievement:read
+	achievements.Get("/", middleware.PermissionCheck("achievement:read"), func(c *fiber.Ctx) error {
+		userToken := c.Locals("user").(*jwt.Token)
+		claims := userToken.Claims.(jwt.MapClaims)
+		userID, _ := uuid.Parse(claims["user_id"].(string))
+
+		results, err := achService.GetMyAchievements(userID)
+		if err != nil {
+			return helper.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return helper.SuccessResponse(c, "My achievements", results)
+	})
+
+	// POST /api/v1/achievements/:id/submit (Submit Prestasi) - Permission: achievement:create
+	achievements.Post("/:id/submit", middleware.PermissionCheck("achievement:create"), func(c *fiber.Ctx) error {
+		idStr := c.Params("id")
+		achID, _ := uuid.Parse(idStr) // ID Postgres
+
+		if err := achService.SubmitAchievement(achID); err != nil {
+			return helper.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return helper.SuccessResponse(c, "Achievement submitted successfully", nil)
+	})
+	
+	// DELETE /api/v1/achievements/:id (Delete Draft) - Permission: achievement:create
+	achievements.Delete("/:id", middleware.PermissionCheck("achievement:create"), func(c *fiber.Ctx) error {
+		idStr := c.Params("id")
+		achID, _ := uuid.Parse(idStr)
+
+		if err := achService.DeleteAchievement(achID); err != nil {
+			return helper.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return helper.SuccessResponse(c, "Achievement deleted successfully", nil)
 	})
 
 	// ================= ADMIN USER MANAGEMENT ROUTES (RBAC) =================
