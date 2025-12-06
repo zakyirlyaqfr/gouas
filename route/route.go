@@ -48,18 +48,22 @@ type AssignAdvisorRequest struct {
 	AdvisorID string `json:"advisor_id"` // ID dari tabel lecturers
 }
 
+type RejectRequest struct {
+	Note string `json:"note"`
+}
+
 // ================= ROUTE SETUP =================
 
 func SetupRoutes(app *fiber.App) {
-	// 1. Init Dependencies (Manual Injection)
+	// 1. Init Dependencies
 	authRepo := repository.NewAuthRepository()
 	userRepo := repository.NewUserRepository()
-	achRepo := repository.NewAchievementRepository() // Dependency Baru Tahap 5
+	achRepo := repository.NewAchievementRepository()
 
 	// Service Initialization
 	authService := service.NewAuthService(authRepo)
 	userService := service.NewUserService(userRepo, authRepo)
-	achService := service.NewAchievementService(achRepo) // Service Baru Tahap 5
+	achService := service.NewAchievementService(achRepo)
 
 	// 2. Group API
 	api := app.Group("/api/v1")
@@ -117,11 +121,12 @@ func SetupRoutes(app *fiber.App) {
 		return helper.SuccessResponse(c, "User profile retrieved", user)
 	})
 
-	// ================= ACHIEVEMENT ROUTES (MAHASISWA) =================
-	// Middleware: Protected Token
+	// ================= ACHIEVEMENT ROUTES (MAHASISWA & DOSEN) =================
 	achievements := api.Group("/achievements", middleware.Protected())
 
-	// POST /api/v1/achievements (Create Draft) - Permission: achievement:create
+	// --- MAHASISWA FEATURES ---
+
+	// POST /api/v1/achievements (Create Draft)
 	achievements.Post("/", middleware.PermissionCheck("achievement:create"), func(c *fiber.Ctx) error {
 		var req model.MongoAchievement
 		// Parsing JSON Body (untuk field dinamis details dsb)
@@ -141,7 +146,7 @@ func SetupRoutes(app *fiber.App) {
 		return helper.SuccessResponse(c, "Achievement created (draft)", result)
 	})
 
-	// GET /api/v1/achievements (List Own Achievements) - Permission: achievement:read
+	// GET /api/v1/achievements (List Own Achievements)
 	achievements.Get("/", middleware.PermissionCheck("achievement:read"), func(c *fiber.Ctx) error {
 		userToken := c.Locals("user").(*jwt.Token)
 		claims := userToken.Claims.(jwt.MapClaims)
@@ -154,10 +159,10 @@ func SetupRoutes(app *fiber.App) {
 		return helper.SuccessResponse(c, "My achievements", results)
 	})
 
-	// POST /api/v1/achievements/:id/submit (Submit Prestasi) - Permission: achievement:create
+	// POST /api/v1/achievements/:id/submit (Submit Prestasi)
 	achievements.Post("/:id/submit", middleware.PermissionCheck("achievement:create"), func(c *fiber.Ctx) error {
 		idStr := c.Params("id")
-		achID, _ := uuid.Parse(idStr) // ID Postgres
+		achID, _ := uuid.Parse(idStr)
 
 		if err := achService.SubmitAchievement(achID); err != nil {
 			return helper.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
@@ -165,7 +170,7 @@ func SetupRoutes(app *fiber.App) {
 		return helper.SuccessResponse(c, "Achievement submitted successfully", nil)
 	})
 	
-	// DELETE /api/v1/achievements/:id (Delete Draft) - Permission: achievement:create
+	// DELETE /api/v1/achievements/:id (Delete Draft)
 	achievements.Delete("/:id", middleware.PermissionCheck("achievement:create"), func(c *fiber.Ctx) error {
 		idStr := c.Params("id")
 		achID, _ := uuid.Parse(idStr)
@@ -176,8 +181,57 @@ func SetupRoutes(app *fiber.App) {
 		return helper.SuccessResponse(c, "Achievement deleted successfully", nil)
 	})
 
+	// --- DOSEN WALI FEATURES (TAHAP 6) ---
+
+	// GET /api/v1/achievements/advisees (List Prestasi Mahasiswa Bimbingan)
+	achievements.Get("/advisees", middleware.PermissionCheck("achievement:verify"), func(c *fiber.Ctx) error {
+		userToken := c.Locals("user").(*jwt.Token)
+		claims := userToken.Claims.(jwt.MapClaims)
+		userID, _ := uuid.Parse(claims["user_id"].(string))
+
+		results, err := achService.GetAdviseeAchievements(userID)
+		if err != nil {
+			return helper.ErrorResponse(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return helper.SuccessResponse(c, "Advisee achievements retrieved", results)
+	})
+
+	// POST /api/v1/achievements/:id/verify (Verify Prestasi)
+	achievements.Post("/:id/verify", middleware.PermissionCheck("achievement:verify"), func(c *fiber.Ctx) error {
+		idStr := c.Params("id")
+		achID, _ := uuid.Parse(idStr)
+		
+		userToken := c.Locals("user").(*jwt.Token)
+		claims := userToken.Claims.(jwt.MapClaims)
+		userID, _ := uuid.Parse(claims["user_id"].(string))
+
+		if err := achService.VerifyAchievement(userID, achID); err != nil {
+			return helper.ErrorResponse(c, fiber.StatusBadRequest, err.Error())
+		}
+		return helper.SuccessResponse(c, "Achievement verified successfully", nil)
+	})
+
+	// POST /api/v1/achievements/:id/reject (Reject Prestasi)
+	achievements.Post("/:id/reject", middleware.PermissionCheck("achievement:verify"), func(c *fiber.Ctx) error {
+		idStr := c.Params("id")
+		achID, _ := uuid.Parse(idStr)
+
+		var req RejectRequest
+		if err := c.BodyParser(&req); err != nil {
+			return helper.ErrorResponse(c, fiber.StatusBadRequest, "Note is required")
+		}
+
+		userToken := c.Locals("user").(*jwt.Token)
+		claims := userToken.Claims.(jwt.MapClaims)
+		userID, _ := uuid.Parse(claims["user_id"].(string))
+
+		if err := achService.RejectAchievement(userID, achID, req.Note); err != nil {
+			return helper.ErrorResponse(c, fiber.StatusBadRequest, err.Error())
+		}
+		return helper.SuccessResponse(c, "Achievement rejected", nil)
+	})
+
 	// ================= ADMIN USER MANAGEMENT ROUTES (RBAC) =================
-	// Hanya user dengan permission 'user:manage' yang bisa akses
 	
 	admin := api.Group("/users", middleware.Protected(), middleware.PermissionCheck("user:manage"))
 
