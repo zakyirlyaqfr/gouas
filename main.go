@@ -2,7 +2,7 @@ package main
 
 import (
 	"gouas/database"
-	"gouas/helper"
+	"gouas/route"
 	"log"
 	"os"
 
@@ -27,13 +27,11 @@ func main() {
 	app := fiber.New()
 
 	// 4. Middlewares Dasar
-	app.Use(cors.New())   // Agar bisa diakses frontend
+	app.Use(cors.New())   // Agar bisa diakses frontend/client lain
 	app.Use(logger.New()) // Log setiap request masuk
 
-	// 5. Test Route (Untuk memastikan server jalan)
-	app.Get("/", func(c *fiber.Ctx) error {
-		return helper.SuccessResponse(c, "Server Back-end SRS Mahasiswa Berjalan!", nil)
-	})
+	// 5. Setup Routes (Panggil fungsi dari package route)
+	route.SetupRoutes(app)
 
 	// 6. Start Server
 	port := os.Getenv("PORT")
@@ -41,5 +39,6 @@ func main() {
 		port = "3000"
 	}
 
+	log.Println("🚀 Server running on port " + port)
 	log.Fatal(app.Listen(":" + port))
 }
