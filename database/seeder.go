@@ -23,7 +23,7 @@ func SeedDatabase() {
 		}
 	}
 
-	// 2. Seed Permissions (Sample dari SRS)
+	// 2. Seed Permissions
 	permissions := []model.Permission{
 		{Name: "achievement:create", Resource: "achievement", Action: "create"},
 		{Name: "achievement:read", Resource: "achievement", Action: "read"},
@@ -54,6 +54,19 @@ func SeedDatabase() {
 
 	if err := db.Where("username = ?", adminUser.Username).FirstOrCreate(&adminUser).Error; err != nil {
 		log.Printf("Failed to seed admin user: %v", err)
+	}
+
+	// ==========================================
+	// 4. ASSIGN PERMISSIONS TO ADMIN (FIX 403)
+	// ==========================================
+	var allPermissions []model.Permission
+	db.Find(&allPermissions) // Ambil semua permission yang ada
+
+	// Masukkan semua permission ke role Admin lewat tabel pivot role_permissions
+	if err := db.Model(&adminRole).Association("Permissions").Replace(allPermissions); err != nil {
+		log.Printf("Failed to assign permissions to admin: %v", err)
+	} else {
+		log.Println("✅ Permissions assigned to Admin Role!")
 	}
 
 	log.Println("✅ Database Seeding Completed!")
