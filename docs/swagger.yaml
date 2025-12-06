@@ -1,0 +1,315 @@
+basePath: /api/v1
+definitions:
+  helper.APIResponse:
+    properties:
+      code:
+        type: integer
+      data: {}
+      message:
+        type: string
+      status:
+        type: string
+    type: object
+  model.Attachment:
+    properties:
+      file_name:
+        type: string
+      file_type:
+        type: string
+      file_url:
+        type: string
+      uploaded_at:
+        type: string
+    type: object
+  model.MongoAchievement:
+    properties:
+      achievement_type:
+        type: string
+      attachments:
+        items:
+          $ref: '#/definitions/model.Attachment'
+        type: array
+      created_at:
+        type: string
+      deleted_at:
+        description: Soft Delete support
+        type: string
+      description:
+        type: string
+      details:
+        additionalProperties: true
+        description: Field Dinamis
+        type: object
+      id:
+        type: string
+      points:
+        type: integer
+      student_id:
+        description: Referensi ke UUID Postgres (sebagai string)
+        type: string
+      tags:
+        items:
+          type: string
+        type: array
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  route.LoginRequest:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    type: object
+  route.RegisterRequest:
+    properties:
+      email:
+        type: string
+      full_name:
+        type: string
+      password:
+        type: string
+      role_id:
+        type: string
+      username:
+        type: string
+    type: object
+  route.RejectRequest:
+    properties:
+      note:
+        type: string
+    type: object
+host: localhost:3000
+info:
+  contact:
+    email: support@gouas.com
+    name: Tim Backend
+  description: API Server untuk SRS Prestasi Mahasiswa (Hybrid Database).
+  title: Sistem Pelaporan Prestasi Mahasiswa API
+  version: "1.0"
+paths:
+  /achievements:
+    get:
+      description: Melihat daftar prestasi milik sendiri
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List My Achievements
+      tags:
+      - Achievements
+    post:
+      consumes:
+      - application/json
+      description: Mahasiswa membuat laporan prestasi baru (Draft)
+      parameters:
+      - description: Data Prestasi
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/model.MongoAchievement'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Create Achievement Draft
+      tags:
+      - Achievements
+  /achievements/{id}:
+    delete:
+      description: Menghapus (soft delete) prestasi draft
+      parameters:
+      - description: Achievement ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete Achievement Draft
+      tags:
+      - Achievements
+  /achievements/{id}/reject:
+    post:
+      description: Dosen menolak prestasi dengan catatan
+      parameters:
+      - description: Achievement ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Alasan Penolakan
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/route.RejectRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Reject Achievement
+      tags:
+      - Verification
+  /achievements/{id}/submit:
+    post:
+      description: Mengubah status prestasi dari draft ke submitted
+      parameters:
+      - description: Achievement ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Submit Achievement
+      tags:
+      - Achievements
+  /achievements/{id}/verify:
+    post:
+      description: Dosen memverifikasi prestasi
+      parameters:
+      - description: Achievement ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Verify Achievement
+      tags:
+      - Verification
+  /achievements/advisees:
+    get:
+      description: Dosen melihat daftar prestasi mahasiswa bimbingan
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get Advisee Achievements
+      tags:
+      - Verification
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Masuk ke sistem dan mendapatkan JWT Token
+      parameters:
+      - description: Payload Login
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/route.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      summary: Login User
+      tags:
+      - Auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Mendaftarkan user baru
+      parameters:
+      - description: Payload Register
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/route.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      summary: Register User
+      tags:
+      - Auth
+  /reports/statistics:
+    get:
+      description: Melihat statistik prestasi
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Dashboard Statistics
+      tags:
+      - Reports
+  /users/profile:
+    get:
+      description: Melihat profil user yang sedang login
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/helper.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: Get My Profile
+      tags:
+      - User
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
