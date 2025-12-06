@@ -1,6 +1,7 @@
 package model
 
-import "github.com/google/uuid"
+// Base struct sudah menghandle ID (UUID), jadi file ini tidak butuh import uuid secara eksplisit
+// kecuali Anda menambahkan field baru bertipe uuid.UUID
 
 type Role struct {
 	Base

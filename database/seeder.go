@@ -5,7 +5,6 @@ import (
 	"log"
 
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 func SeedDatabase() {
@@ -43,7 +42,7 @@ func SeedDatabase() {
 	db.Where("name = ?", "Admin").First(&adminRole)
 
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
-	
+
 	adminUser := model.User{
 		Username:     "admin",
 		Email:        "admin@gouas.com",
