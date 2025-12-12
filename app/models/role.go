@@ -11,5 +11,7 @@ type Role struct {
 	Name        string       `gorm:"type:varchar(50);unique;not null"`
 	Description string       `gorm:"type:text"`
 	CreatedAt   time.Time    `gorm:"autoCreateTime"`
+	
+	// Many-to-Many dengan Permission (otomatis buat tabel role_permissions)
 	Permissions []Permission `gorm:"many2many:role_permissions;"`
 }

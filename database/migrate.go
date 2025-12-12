@@ -6,19 +6,17 @@ import (
 )
 
 func Migrate() {
-	// AutoMigrate hanya membuat tabel/kolom yang belum ada
 	err := DB.AutoMigrate(
 		&models.Role{},
 		&models.Permission{},
 		&models.User{},
+		&models.Student{}, // Dibuat DULUAN
 		&models.Lecturer{},
-		&models.Student{},
-		&models.AchievementReference{},
+		&models.AchievementReference{}, // Dibuat TERAKHIR
 	)
 
 	if err != nil {
-		log.Fatal("Failed to migrate database:", err)
+		log.Fatal("Failed to migrate database: ", err)
 	}
-
 	log.Println("Database migration completed successfully")
 }

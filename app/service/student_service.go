@@ -11,6 +11,8 @@ type StudentService interface {
 	GetAll() ([]models.Student, error)
 	GetDetail(id uuid.UUID) (*models.Student, error)
 	AssignAdvisor(studentID, advisorID uuid.UUID) error
+	// NEW
+	GetProfileByUserID(userID uuid.UUID) (*models.Student, error)
 }
 
 type studentService struct {
@@ -31,4 +33,9 @@ func (s *studentService) GetDetail(id uuid.UUID) (*models.Student, error) {
 
 func (s *studentService) AssignAdvisor(studentID, advisorID uuid.UUID) error {
 	return s.repo.UpdateAdvisor(studentID, advisorID)
+}
+
+// --- NEW IMPL ---
+func (s *studentService) GetProfileByUserID(userID uuid.UUID) (*models.Student, error) {
+	return s.repo.FindByUserID(userID)
 }

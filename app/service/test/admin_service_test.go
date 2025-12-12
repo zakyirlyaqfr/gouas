@@ -28,16 +28,19 @@ func (m *MockAdminRepo) UpdateUserRole(userID uuid.UUID, roleID uuid.UUID) error
 	return nil
 }
 
-// --- NEW METHODS MOCK (Fix Error InvalidIfaceAssign) ---
 func (m *MockAdminRepo) FindAllUsers() ([]models.User, error) {
 	args := m.Called()
-	if args.Get(0) == nil { return nil, args.Error(1) }
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).([]models.User), args.Error(1)
 }
 
 func (m *MockAdminRepo) FindUserByID(id uuid.UUID) (*models.User, error) {
 	args := m.Called(id)
-	if args.Get(0) == nil { return nil, args.Error(1) }
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
@@ -51,6 +54,17 @@ func (m *MockAdminRepo) DeleteUser(id uuid.UUID) error {
 	return args.Error(0)
 }
 
+// --- NEW METHODS MOCK (Fix Error InvalidIfaceAssign) ---
+func (m *MockAdminRepo) CreateStudentProfile(student models.Student) error {
+	args := m.Called(student)
+	return args.Error(0)
+}
+
+func (m *MockAdminRepo) CreateLecturerProfile(lecturer models.Lecturer) error {
+	args := m.Called(lecturer)
+	return args.Error(0)
+}
+
 // --- TESTS ---
 
 func TestCreateUser_Success(t *testing.T) {
@@ -59,14 +73,16 @@ func TestCreateUser_Success(t *testing.T) {
 
 	roleID := uuid.New()
 	mockRole := models.Role{ID: roleID, Name: "Admin"}
-	
+
 	mockRepo.On("FindRoleByName", "Admin").Return(mockRole, nil)
-	
+
+	// Kita match sembarang argument User karena ID & Hash bisa berubah
 	mockRepo.On("CreateUser", mock.AnythingOfType("models.User")).Return(models.User{
 		Username: "admin_baru",
-		RoleID: roleID,
+		RoleID:   roleID,
 	}, nil)
 
+	// Note: Karena role "Admin", logic CreateStudentProfile tidak dipanggil, jadi tidak perlu di-mock expect-nya
 	createdUser, err := adminService.CreateUser("admin_baru", "admin@email.com", "pass123", "Admin Baru", "Admin")
 
 	assert.NoError(t, err)

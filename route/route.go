@@ -21,13 +21,17 @@ func InitRoutes(
 ) {
 	api := app.Group("/api/v1")
 
+	// Helper wrapper agar response konsisten JSON
 	jsonResponse := func(c *fiber.Ctx, code int, status string, message string, data interface{}) error {
 		response := helper.APIResponse(status, message, data)
 		return c.Status(code).JSON(response)
 	}
 
-	// --- 5.1 AUTHENTICATION ---
+	// =========================================================================
+	// 5.1 AUTHENTICATION
+	// =========================================================================
 	auth := api.Group("/auth")
+	
 	auth.Post("/login", func(c *fiber.Ctx) error {
 		var input struct {
 			Username string `json:"username"`
@@ -58,8 +62,12 @@ func InitRoutes(
 	})
 
 
-	// --- 5.2 USERS (ADMIN) ---
+	// =========================================================================
+	// 5.2 USERS (ADMIN)
+	// =========================================================================
 	users := api.Group("/users")
+	
+	// Middleware Check: Hanya Admin
 	users.Use(func(c *fiber.Ctx) error {
 		authData, err := middleware.CheckAuth(c.Get("Authorization"))
 		if err != nil || authData.Role != "Admin" {
@@ -90,6 +98,8 @@ func InitRoutes(
 			RoleName string `json:"roleName"`
 		}
 		if err := c.BodyParser(&input); err != nil { return jsonResponse(c, 400, "error", "Invalid input", nil) }
+		
+		// Create User sekaligus Create Profile (Student/Lecturer) otomatis di Service
 		user, err := adminService.CreateUser(input.Username, input.Email, input.Password, input.FullName, input.RoleName)
 		if err != nil { return jsonResponse(c, 500, "error", err.Error(), nil) }
 		return jsonResponse(c, 201, "success", "User created", user)
@@ -124,21 +134,34 @@ func InitRoutes(
 	})
 
 
-	// --- 5.4 ACHIEVEMENTS ---
+	// =========================================================================
+	// 5.4 ACHIEVEMENTS
+	// =========================================================================
 	ach := api.Group("/achievements")
 	
 	ach.Get("/", func(c *fiber.Ctx) error {
 		authData, err := middleware.CheckAuth(c.Get("Authorization"))
 		if err != nil { return jsonResponse(c, 401, "error", "Unauthorized", nil) }
 		
+		// Filter logic: Mahasiswa lihat punya sendiri, Admin/Dosen lihat semua
 		userID, _ := uuid.Parse(authData.UserID)
-		data, err := achievementService.GetAll(authData.Role, userID)
+		
+		// Jika mahasiswa, kita perlu mencari StudentID-nya dulu
+		var targetID uuid.UUID
+		if authData.Role == "Mahasiswa" {
+			student, err := studentService.GetProfileByUserID(userID)
+			if err != nil { return jsonResponse(c, 404, "error", "Student profile not found", nil) }
+			targetID = student.ID
+		} else {
+			targetID = userID // Untuk admin/dosen param ini diabaikan di service
+		}
+
+		data, err := achievementService.GetAll(authData.Role, targetID)
 		if err != nil { return jsonResponse(c, 500, "error", err.Error(), nil) }
 		return jsonResponse(c, 200, "success", "Achievement list", data)
 	})
 
 	ach.Get("/:id", func(c *fiber.Ctx) error {
-		// PERBAIKAN: authData diganti _ karena tidak dipakai variable-nya, hanya untuk cek error nil
 		_, err := middleware.CheckAuth(c.Get("Authorization"))
 		if err != nil { return jsonResponse(c, 401, "error", "Unauthorized", nil) }
 		
@@ -157,8 +180,16 @@ func InitRoutes(
 
 		var input models.Achievement
 		if err := c.BodyParser(&input); err != nil { return jsonResponse(c, 400, "error", "Invalid JSON", nil) }
-		studentID, _ := uuid.Parse(authData.UserID)
-		result, err := achievementService.Create(studentID, input)
+
+		// PERBAIKAN CRITICAL: Cari Student Profile berdasarkan UserID
+		userID, _ := uuid.Parse(authData.UserID)
+		student, err := studentService.GetProfileByUserID(userID)
+		if err != nil {
+			return jsonResponse(c, 404, "error", "Student profile not found. Contact admin.", nil)
+		}
+
+		// Gunakan StudentID asli
+		result, err := achievementService.Create(student.ID, input)
 		if err != nil { return jsonResponse(c, 500, "error", err.Error(), nil) }
 		return jsonResponse(c, 201, "success", "Achievement created", result)
 	})
@@ -168,11 +199,16 @@ func InitRoutes(
 		if err != nil { return jsonResponse(c, 401, "error", "Unauthorized", nil) }
 		
 		id, _ := uuid.Parse(c.Params("id"))
-		studentID, _ := uuid.Parse(authData.UserID)
+		userID, _ := uuid.Parse(authData.UserID)
+		
+		// Cari student ID user yang login
+		student, err := studentService.GetProfileByUserID(userID)
+		if err != nil { return jsonResponse(c, 404, "error", "Profile not found", nil) }
+
 		var input models.Achievement
 		c.BodyParser(&input)
 
-		if err := achievementService.Update(id, studentID, input); err != nil {
+		if err := achievementService.Update(id, student.ID, input); err != nil {
 			return jsonResponse(c, 500, "error", err.Error(), nil)
 		}
 		return jsonResponse(c, 200, "success", "Achievement updated", nil)
@@ -183,8 +219,12 @@ func InitRoutes(
 		if err != nil { return jsonResponse(c, 401, "error", "Unauthorized", nil) }
 		
 		id, _ := uuid.Parse(c.Params("id"))
-		studentID, _ := uuid.Parse(authData.UserID)
-		if err := achievementService.Delete(id, studentID); err != nil {
+		userID, _ := uuid.Parse(authData.UserID)
+
+		student, err := studentService.GetProfileByUserID(userID)
+		if err != nil { return jsonResponse(c, 404, "error", "Profile not found", nil) }
+
+		if err := achievementService.Delete(id, student.ID); err != nil {
 			return jsonResponse(c, 500, "error", err.Error(), nil)
 		}
 		return jsonResponse(c, 200, "success", "Achievement deleted", nil)
@@ -193,9 +233,14 @@ func InitRoutes(
 	ach.Post("/:id/submit", func(c *fiber.Ctx) error {
 		authData, err := middleware.CheckAuth(c.Get("Authorization"))
 		if err != nil { return jsonResponse(c, 401, "error", "Unauthorized", nil) }
+		
 		achID, _ := uuid.Parse(c.Params("id"))
 		userID, _ := uuid.Parse(authData.UserID)
-		if err := achievementService.Submit(achID, userID); err != nil {
+		
+		student, err := studentService.GetProfileByUserID(userID)
+		if err != nil { return jsonResponse(c, 404, "error", "Profile not found", nil) }
+
+		if err := achievementService.Submit(achID, student.ID); err != nil {
 			return jsonResponse(c, 400, "error", err.Error(), nil)
 		}
 		return jsonResponse(c, 200, "success", "Achievement submitted", nil)
@@ -207,7 +252,8 @@ func InitRoutes(
 			return jsonResponse(c, 403, "error", "Forbidden", nil)
 		}
 		achID, _ := uuid.Parse(c.Params("id"))
-		lecturerID, _ := uuid.Parse(authData.UserID)
+		lecturerID, _ := uuid.Parse(authData.UserID) // Asumsi UserID lecturer disimpan sbg verifier (atau perlu lookup lecturer profile)
+		
 		if err := achievementService.Verify(achID, lecturerID); err != nil {
 			return jsonResponse(c, 400, "error", err.Error(), nil)
 		}
@@ -230,7 +276,6 @@ func InitRoutes(
 	})
 
 	ach.Get("/:id/history", func(c *fiber.Ctx) error {
-		// PERBAIKAN: authData diganti _
 		_, err := middleware.CheckAuth(c.Get("Authorization"))
 		if err != nil { return jsonResponse(c, 401, "error", "Unauthorized", nil) }
 		id, _ := uuid.Parse(c.Params("id"))
@@ -244,18 +289,23 @@ func InitRoutes(
 		if err != nil { return jsonResponse(c, 401, "error", "Unauthorized", nil) }
 		
 		id, _ := uuid.Parse(c.Params("id"))
-		studentID, _ := uuid.Parse(authData.UserID)
+		userID, _ := uuid.Parse(authData.UserID)
+		student, err := studentService.GetProfileByUserID(userID)
+		if err != nil { return jsonResponse(c, 404, "error", "Profile not found", nil) }
+
 		var input struct { FileName string `json:"fileName"`; FileUrl string `json:"fileUrl"` }
 		c.BodyParser(&input)
 		
-		if err := achievementService.AddAttachment(id, studentID, input.FileName, input.FileUrl); err != nil {
+		if err := achievementService.AddAttachment(id, student.ID, input.FileName, input.FileUrl); err != nil {
 			return jsonResponse(c, 500, "error", err.Error(), nil)
 		}
 		return jsonResponse(c, 200, "success", "Attachment added", nil)
 	})
 
 
-	// --- 5.5 STUDENTS & LECTURERS ---
+	// =========================================================================
+	// 5.5 STUDENTS & LECTURERS
+	// =========================================================================
 	api.Get("/students", func(c *fiber.Ctx) error {
 		students, err := studentService.GetAll()
 		if err != nil { return jsonResponse(c, 500, "error", err.Error(), nil) }
@@ -305,7 +355,9 @@ func InitRoutes(
 	})
 
 
-	// --- 5.8 REPORTS ---
+	// =========================================================================
+	// 5.8 REPORTS
+	// =========================================================================
 	api.Get("/reports/statistics", func(c *fiber.Ctx) error {
 		stats, err := reportService.GetStatistics()
 		if err != nil { return jsonResponse(c, 500, "error", err.Error(), nil) }
@@ -314,6 +366,7 @@ func InitRoutes(
 	
 	api.Get("/reports/student/:id", func(c *fiber.Ctx) error {
 		id, _ := uuid.Parse(c.Params("id"))
+		// Reuse logic: fetch achievements as report
 		data, err := achievementService.GetAll("Mahasiswa", id)
 		if err != nil { return jsonResponse(c, 500, "error", err.Error(), nil) }
 		return jsonResponse(c, 200, "success", "Student Report", data)

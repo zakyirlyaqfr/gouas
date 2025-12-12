@@ -11,11 +11,13 @@ type AdminRepository interface {
 	CreateUser(user models.User) (models.User, error)
 	FindRoleByName(name string) (models.Role, error)
 	UpdateUserRole(userID uuid.UUID, roleID uuid.UUID) error
-	// New Methods
 	FindAllUsers() ([]models.User, error)
 	FindUserByID(id uuid.UUID) (*models.User, error)
 	UpdateUser(user models.User) error
 	DeleteUser(id uuid.UUID) error
+	// NEW: Helper untuk auto-create profile
+	CreateStudentProfile(student models.Student) error
+	CreateLecturerProfile(lecturer models.Lecturer) error
 }
 
 type adminRepository struct {
@@ -59,4 +61,13 @@ func (r *adminRepository) UpdateUser(user models.User) error {
 
 func (r *adminRepository) DeleteUser(id uuid.UUID) error {
 	return r.db.Delete(&models.User{}, "id = ?", id).Error
+}
+
+// --- NEW IMPLEMENTATION ---
+func (r *adminRepository) CreateStudentProfile(student models.Student) error {
+	return r.db.Create(&student).Error
+}
+
+func (r *adminRepository) CreateLecturerProfile(lecturer models.Lecturer) error {
+	return r.db.Create(&lecturer).Error
 }

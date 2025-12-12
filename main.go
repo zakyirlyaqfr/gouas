@@ -19,36 +19,66 @@ import (
 	"gorm.io/gorm"
 )
 
-// Fungsi untuk seeding data awal (Role & Admin)
+// Fungsi untuk seeding data awal (Role, Permission & Admin)
 func seedDatabase(db *gorm.DB) {
-	roles := []string{"Admin", "Mahasiswa", "Dosen Wali"}
-	for _, r := range roles {
-		var roleExist models.Role
-		if err := db.Where("name = ?", r).First(&roleExist).Error; err != nil {
-			// Jika role belum ada, buat baru
-			// Khusus Admin, beri permission user:manage
-			perms := []models.Permission{}
-			if r == "Admin" {
-				// Pastikan permission ada dulu
-				perm := models.Permission{Name: "user:manage", Resource: "user", Action: "manage"}
-				db.FirstOrCreate(&perm, models.Permission{Name: "user:manage"})
-				perms = append(perms, perm)
+	// Definisi Role beserta Permission-nya sesuai SRS
+	rolePermissions := map[string][]string{
+		"Admin": {
+			"user:manage",
+		},
+		"Mahasiswa": {
+			"achievement:create",
+			"achievement:read",
+			"achievement:update",
+			"achievement:delete",
+		},
+		"Dosen Wali": {
+			"achievement:read",
+			"achievement:verify",
+		},
+	}
+
+	for roleName, permNames := range rolePermissions {
+		// 1. Buat Permission jika belum ada
+		var permissions []models.Permission
+		for _, permName := range permNames {
+			var perm models.Permission
+			// Cek apakah permission sudah ada
+			if err := db.Where("name = ?", permName).First(&perm).Error; err != nil {
+				// Resource & Action simple parsing (achievement:create -> resource: achievement, action: create)
+				// Ini simplifikasi string split
+				perm = models.Permission{
+					Name:        permName,
+					Resource:    permName, // Bisa diparsing lebih rapi jika mau
+					Action:      "access",
+					Description: "Auto generated",
+				}
+				db.Create(&perm)
 			}
-			
-			newRole := models.Role{Name: r, Permissions: perms}
+			permissions = append(permissions, perm)
+		}
+
+		// 2. Buat Role dan Assign Permission
+		var role models.Role
+		if err := db.Where("name = ?", roleName).Preload("Permissions").First(&role).Error; err != nil {
+			// Jika role belum ada, buat baru dengan permissions
+			newRole := models.Role{Name: roleName, Permissions: permissions}
 			db.Create(&newRole)
-			fmt.Printf("[SEED] Role created: %s\n", r)
+			fmt.Printf("[SEED] Role created: %s with permissions %v\n", roleName, permNames)
+		} else {
+			// Jika role sudah ada, pastikan permissions terupdate (untuk development)
+			db.Model(&role).Association("Permissions").Replace(permissions)
+			fmt.Printf("[SEED] Role updated: %s permissions refreshed\n", roleName)
 		}
 	}
 
-	// 2. Seed Admin User
+	// 3. Seed Admin User
 	var adminRole models.Role
 	db.Where("name = ?", "Admin").First(&adminRole)
 
 	var userExist models.User
 	if err := db.Where("username = ?", "admin").First(&userExist).Error; err != nil {
-		// Jika user admin belum ada, buat baru
-		hash, _ := helper.HashPassword("admin123") // Password default
+		hash, _ := helper.HashPassword("admin123")
 		admin := models.User{
 			Username:     "admin",
 			Email:        "admin@gmail.com",
@@ -58,7 +88,7 @@ func seedDatabase(db *gorm.DB) {
 			IsActive:     true,
 		}
 		db.Create(&admin)
-		fmt.Println("[SEED] User 'admin' created with password 'admin123'")
+		fmt.Println("[SEED] User 'admin' created")
 	}
 }
 
