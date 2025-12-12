@@ -56,9 +56,32 @@ func (m *MockAchievementRepo) SoftDelete(id uuid.UUID) error {
 	return args.Error(0)
 }
 
+// --- NEW METHODS MOCK (Fix Error InvalidIfaceAssign) ---
+func (m *MockAchievementRepo) FindAllReferences() ([]models.AchievementReference, error) {
+	args := m.Called()
+	if args.Get(0) == nil { return nil, args.Error(1) }
+	return args.Get(0).([]models.AchievementReference), args.Error(1)
+}
+
+func (m *MockAchievementRepo) FindReferencesByStudentID(studentID uuid.UUID) ([]models.AchievementReference, error) {
+	args := m.Called(studentID)
+	if args.Get(0) == nil { return nil, args.Error(1) }
+	return args.Get(0).([]models.AchievementReference), args.Error(1)
+}
+
+func (m *MockAchievementRepo) GetMongoDetail(mongoID string) (*models.Achievement, error) {
+	args := m.Called(mongoID)
+	if args.Get(0) == nil { return nil, args.Error(1) }
+	return args.Get(0).(*models.Achievement), args.Error(1)
+}
+
+func (m *MockAchievementRepo) UpdateMongo(mongoID string, data models.Achievement) error {
+	args := m.Called(mongoID, data)
+	return args.Error(0)
+}
+
 // --- TESTS ---
 
-// 1. Test POST Create Achievement
 func TestCreateAchievement_Success(t *testing.T) {
 	mockRepo := new(MockAchievementRepo)
 	svc := service.NewAchievementService(mockRepo)
@@ -76,7 +99,6 @@ func TestCreateAchievement_Success(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// 2. Test POST Submit (Workflow: Draft -> Submitted)
 func TestSubmitAchievement_Success(t *testing.T) {
 	mockRepo := new(MockAchievementRepo)
 	svc := service.NewAchievementService(mockRepo)
@@ -84,7 +106,6 @@ func TestSubmitAchievement_Success(t *testing.T) {
 	id := uuid.New()
 	studentID := uuid.New()
 
-	// Mock: Find returns Draft belonging to Student
 	mockRepo.On("FindReferenceByID", id).Return(&models.AchievementReference{
 		ID: id, StudentID: studentID, Status: models.StatusDraft,
 	}, nil)
@@ -96,7 +117,6 @@ func TestSubmitAchievement_Success(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// 3. Test POST Verify (Workflow: Submitted -> Verified)
 func TestVerifyAchievement_Success(t *testing.T) {
 	mockRepo := new(MockAchievementRepo)
 	svc := service.NewAchievementService(mockRepo)
@@ -104,7 +124,6 @@ func TestVerifyAchievement_Success(t *testing.T) {
 	id := uuid.New()
 	verifierID := uuid.New()
 
-	// Mock: Find returns Submitted
 	mockRepo.On("FindReferenceByID", id).Return(&models.AchievementReference{
 		ID: id, Status: models.StatusSubmitted,
 	}, nil)
@@ -115,7 +134,6 @@ func TestVerifyAchievement_Success(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// 4. Test POST Reject (Workflow: Submitted -> Rejected)
 func TestRejectAchievement_Success(t *testing.T) {
 	mockRepo := new(MockAchievementRepo)
 	svc := service.NewAchievementService(mockRepo)

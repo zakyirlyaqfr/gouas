@@ -20,6 +20,11 @@ type AchievementRepository interface {
 	Reject(id uuid.UUID, note string) error
 	AddAttachment(mongoID string, attachment models.Attachment) error
 	SoftDelete(id uuid.UUID) error
+	// New Methods
+	FindAllReferences() ([]models.AchievementReference, error)
+	FindReferencesByStudentID(studentID uuid.UUID) ([]models.AchievementReference, error)
+	GetMongoDetail(mongoID string) (*models.Achievement, error)
+	UpdateMongo(mongoID string, data models.Achievement) error
 }
 
 type achievementRepository struct {
@@ -132,4 +137,49 @@ func (r *achievementRepository) SoftDelete(id uuid.UUID) error {
 			"status":     models.StatusDeleted,
 			"updated_at": time.Now(),
 		}).Error
+}
+
+// --- NEW METHODS ---
+
+func (r *achievementRepository) FindAllReferences() ([]models.AchievementReference, error) {
+	var refs []models.AchievementReference
+	err := r.pg.Preload("Student.User").Order("created_at desc").Find(&refs).Error
+	return refs, err
+}
+
+func (r *achievementRepository) FindReferencesByStudentID(studentID uuid.UUID) ([]models.AchievementReference, error) {
+	var refs []models.AchievementReference
+	err := r.pg.Where("student_id = ?", studentID).Order("created_at desc").Find(&refs).Error
+	return refs, err
+}
+
+func (r *achievementRepository) GetMongoDetail(mongoID string) (*models.Achievement, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	objID, err := primitive.ObjectIDFromHex(mongoID)
+	if err != nil { return nil, err }
+	
+	var achievement models.Achievement
+	err = r.mongo.FindOne(ctx, bson.M{"_id": objID}).Decode(&achievement)
+	return &achievement, err
+}
+
+func (r *achievementRepository) UpdateMongo(mongoID string, data models.Achievement) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	objID, err := primitive.ObjectIDFromHex(mongoID)
+	if err != nil { return err }
+
+	update := bson.M{
+		"$set": bson.M{
+			"title": data.Title,
+			"description": data.Description,
+			"achievementType": data.AchievementType,
+			"details": data.Details,
+			"tags": data.Tags,
+			"updatedAt": time.Now(),
+		},
+	}
+	_, err = r.mongo.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	return err
 }

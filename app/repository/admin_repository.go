@@ -11,6 +11,11 @@ type AdminRepository interface {
 	CreateUser(user models.User) (models.User, error)
 	FindRoleByName(name string) (models.Role, error)
 	UpdateUserRole(userID uuid.UUID, roleID uuid.UUID) error
+	// New Methods
+	FindAllUsers() ([]models.User, error)
+	FindUserByID(id uuid.UUID) (*models.User, error)
+	UpdateUser(user models.User) error
+	DeleteUser(id uuid.UUID) error
 }
 
 type adminRepository struct {
@@ -34,4 +39,24 @@ func (r *adminRepository) FindRoleByName(name string) (models.Role, error) {
 
 func (r *adminRepository) UpdateUserRole(userID uuid.UUID, roleID uuid.UUID) error {
 	return r.db.Model(&models.User{}).Where("id = ?", userID).Update("role_id", roleID).Error
+}
+
+func (r *adminRepository) FindAllUsers() ([]models.User, error) {
+	var users []models.User
+	err := r.db.Preload("Role").Find(&users).Error
+	return users, err
+}
+
+func (r *adminRepository) FindUserByID(id uuid.UUID) (*models.User, error) {
+	var user models.User
+	err := r.db.Preload("Role").First(&user, "id = ?", id).Error
+	return &user, err
+}
+
+func (r *adminRepository) UpdateUser(user models.User) error {
+	return r.db.Save(&user).Error
+}
+
+func (r *adminRepository) DeleteUser(id uuid.UUID) error {
+	return r.db.Delete(&models.User{}, "id = ?", id).Error
 }
