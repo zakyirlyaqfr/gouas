@@ -1,40 +1,29 @@
 package repository
 
 import (
-	"gouas/app/model"
-	"gouas/database"
+	"gouas/app/models"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type AuthRepository interface {
-	CreateUser(user *model.User) error
-	FindByUsername(username string) (*model.User, error)
-	FindByID(id uuid.UUID) (*model.User, error)
+	FindByUsername(username string) (*models.User, error)
 }
 
 type authRepository struct {
 	db *gorm.DB
 }
 
-func NewAuthRepository() AuthRepository {
-	return &authRepository{db: database.DB}
+func NewAuthRepository(db *gorm.DB) AuthRepository {
+	return &authRepository{db}
 }
 
-func (r *authRepository) CreateUser(user *model.User) error {
-	return r.db.Create(user).Error
-}
-
-func (r *authRepository) FindByUsername(username string) (*model.User, error) {
-	var user model.User
-	// Preload Role & Permissions
+func (r *authRepository) FindByUsername(username string) (*models.User, error) {
+	var user models.User
+	// Eager load Role dan Permissions di dalam Role tersebut
 	err := r.db.Preload("Role.Permissions").Where("username = ?", username).First(&user).Error
-	return &user, err
-}
-
-func (r *authRepository) FindByID(id uuid.UUID) (*model.User, error) {
-	var user model.User
-	err := r.db.Preload("Role.Permissions").Where("id = ?", id).First(&user).Error
-	return &user, err
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }

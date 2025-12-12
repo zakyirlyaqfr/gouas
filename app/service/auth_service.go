@@ -2,66 +2,50 @@ package service
 
 import (
 	"errors"
-	"gouas/app/model"
 	"gouas/app/repository"
-	"gouas/utils"
-
-	"github.com/google/uuid"
+	"gouas/helper"
 )
 
 type AuthService interface {
-	Register(username, email, password, fullName string, roleID uuid.UUID) (*model.User, error)
-	Login(username, password string) (string, *model.User, error)
-	GetProfile(userID uuid.UUID) (*model.User, error)
+	Login(username, password string) (string, error)
 }
 
 type authService struct {
-	repo repository.AuthRepository
+	authRepo repository.AuthRepository
 }
 
-func NewAuthService(repo repository.AuthRepository) AuthService {
-	return &authService{repo: repo}
+func NewAuthService(authRepo repository.AuthRepository) AuthService {
+	return &authService{authRepo}
 }
 
-func (s *authService) Register(username, email, password, fullName string, roleID uuid.UUID) (*model.User, error) {
-	hashedPassword, err := utils.HashPassword(password)
+func (s *authService) Login(username, password string) (string, error) {
+	// 1. Cari user
+	user, err := s.authRepo.FindByUsername(username)
 	if err != nil {
-		return nil, err
+		return "", errors.New("invalid credentials")
 	}
 
-	user := &model.User{
-		Username:     username,
-		Email:        email,
-		PasswordHash: hashedPassword,
-		FullName:     fullName,
-		RoleID:       roleID,
-		IsActive:     true,
+	// 2. Cek Password
+	if !helper.CheckPasswordHash(password, user.PasswordHash) {
+		return "", errors.New("invalid credentials")
 	}
 
-	if err := s.repo.CreateUser(user); err != nil {
-		return nil, err
+	// 3. Cek Active
+	if !user.IsActive {
+		return "", errors.New("user is inactive")
 	}
-	return user, nil
-}
 
-func (s *authService) Login(username, password string) (string, *model.User, error) {
-	user, err := s.repo.FindByUsername(username)
+	// 4. Collect Permissions
+	var permissions []string
+	for _, p := range user.Role.Permissions {
+		permissions = append(permissions, p.Name)
+	}
+
+	// 5. Generate Token
+	token, err := helper.GenerateJWT(user.ID, user.Role.Name, permissions)
 	if err != nil {
-		return "", nil, errors.New("invalid username or password")
+		return "", err
 	}
 
-	if !utils.CheckPasswordHash(password, user.PasswordHash) {
-		return "", nil, errors.New("invalid username or password")
-	}
-
-	token, err := utils.GenerateToken(user.ID, user.RoleID)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return token, user, nil
-}
-
-func (s *authService) GetProfile(userID uuid.UUID) (*model.User, error) {
-	return s.repo.FindByID(userID)
+	return token, nil
 }

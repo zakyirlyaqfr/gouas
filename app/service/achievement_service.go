@@ -2,22 +2,20 @@ package service
 
 import (
 	"errors"
-	"gouas/app/model"
+	"gouas/app/models"
 	"gouas/app/repository"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 type AchievementService interface {
-	CreateDraft(userID uuid.UUID, req model.MongoAchievement) (*model.AchievementReference, error)
-	GetMyAchievements(userID uuid.UUID) ([]map[string]interface{}, error)
-	SubmitAchievement(id uuid.UUID) error 
-	DeleteAchievement(id uuid.UUID) error
-	
-	// Dosen Features
-	GetAdviseeAchievements(userID uuid.UUID) ([]map[string]interface{}, error)
-	VerifyAchievement(userID uuid.UUID, achievementID uuid.UUID) error
-	RejectAchievement(userID uuid.UUID, achievementID uuid.UUID, note string) error
+	Create(studentID uuid.UUID, data models.Achievement) (*models.AchievementReference, error)
+	Submit(id uuid.UUID, studentID uuid.UUID) error
+	Verify(id uuid.UUID, verifierID uuid.UUID) error
+	Reject(id uuid.UUID, verifierID uuid.UUID, note string) error
+	Delete(id uuid.UUID, studentID uuid.UUID) error
+	AddAttachment(id uuid.UUID, studentID uuid.UUID, fileName, fileURL string) error
 }
 
 type achievementService struct {
@@ -25,117 +23,100 @@ type achievementService struct {
 }
 
 func NewAchievementService(repo repository.AchievementRepository) AchievementService {
-	return &achievementService{repo: repo}
+	return &achievementService{repo}
 }
 
-// ... (Existing Methods: CreateDraft, GetMyAchievements, Submit, Delete) ...
-// Copy-paste method lama di sini, jangan dihapus
-
-func (s *achievementService) CreateDraft(userID uuid.UUID, req model.MongoAchievement) (*model.AchievementReference, error) {
-	student, err := s.repo.FindStudentByUserID(userID)
-	if err != nil { return nil, errors.New("student profile not found") }
-	req.StudentID = student.ID.String()
-	mongoID, err := s.repo.CreateMongo(&req)
-	if err != nil { return nil, err }
-	ref := &model.AchievementReference{StudentID: student.ID, MongoAchievementID: mongoID, Status: model.StatusDraft}
-	if err := s.repo.CreateReference(ref); err != nil {
-		s.repo.SoftDeleteMongo(mongoID)
-		return nil, err
+func (s *achievementService) Create(studentID uuid.UUID, data models.Achievement) (*models.AchievementReference, error) {
+	if data.Title == "" || data.AchievementType == "" {
+		return nil, errors.New("title and type are required")
 	}
-	return ref, nil
+	return s.repo.Create(data, studentID)
 }
 
-func (s *achievementService) GetMyAchievements(userID uuid.UUID) ([]map[string]interface{}, error) {
-	student, err := s.repo.FindStudentByUserID(userID)
-	if err != nil { return nil, errors.New("student profile not found") }
-	refs, err := s.repo.FindReferencesByStudentID(student.ID)
-	if err != nil { return nil, err }
-	
-	var results []map[string]interface{}
-	for _, ref := range refs {
-		mongoData, _ := s.repo.FindMongoByID(ref.MongoAchievementID)
-		item := map[string]interface{}{
-			"id": ref.ID, "status": ref.Status, "mongo_id": ref.MongoAchievementID, "details": mongoData, "created_at": ref.CreatedAt,
-		}
-		results = append(results, item)
-	}
-	return results, nil
-}
-
-func (s *achievementService) SubmitAchievement(id uuid.UUID) error {
-	return s.repo.UpdateReferenceStatus(id, model.StatusSubmitted)
-}
-
-func (s *achievementService) DeleteAchievement(id uuid.UUID) error {
-	return s.repo.SoftDeleteReference(id)
-}
-
-// --- NEW METHODS FOR TAHAP 6 ---
-
-func (s *achievementService) GetAdviseeAchievements(userID uuid.UUID) ([]map[string]interface{}, error) {
-	// 1. Cari Profile Dosen berdasarkan User ID
-	lecturer, err := s.repo.FindLecturerByUserID(userID)
+func (s *achievementService) Submit(id uuid.UUID, studentID uuid.UUID) error {
+	ref, err := s.repo.FindReferenceByID(id)
 	if err != nil {
-		return nil, errors.New("lecturer profile not found")
+		return err
 	}
 
-	// 2. Cari semua prestasi mahasiswa bimbingan beliau
-	refs, err := s.repo.FindReferencesByAdvisorID(lecturer.ID)
+	if ref.StudentID != studentID {
+		return errors.New("unauthorized")
+	}
+
+	if ref.Status != models.StatusDraft {
+		return errors.New("only draft achievement can be submitted")
+	}
+
+	return s.repo.UpdateStatus(id, models.StatusSubmitted)
+}
+
+func (s *achievementService) Verify(id uuid.UUID, verifierID uuid.UUID) error {
+	ref, err := s.repo.FindReferenceByID(id)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// 3. Construct Data (Include data mahasiswa)
-	var results []map[string]interface{}
-	for _, ref := range refs {
-		mongoData, _ := s.repo.FindMongoByID(ref.MongoAchievementID)
-		
-		item := map[string]interface{}{
-			"id":             ref.ID,
-			"status":         ref.Status,
-			"student_nim":    ref.Student.NIM, // Info tambahan
-			"student_name":   "Loaded from Users Table", // (Simplified, harusnya join user juga)
-			"details":        mongoData,
-			"submitted_at":   ref.CreatedAt, // Harusnya submitted_at column, pake created_at dlu sbg mock
-		}
-		results = append(results, item)
+	if ref.Status != models.StatusSubmitted {
+		return errors.New("achievement is not in submitted status")
 	}
-	return results, nil
+
+	return s.repo.Verify(id, verifierID)
 }
 
-func (s *achievementService) VerifyAchievement(userID uuid.UUID, achievementID uuid.UUID) error {
-	// 1. Validasi Dosen
-	lecturer, err := s.repo.FindLecturerByUserID(userID)
-	if err != nil { return errors.New("lecturer profile not found") }
-
-	// 2. Ambil Achievement
-	ach, err := s.repo.FindReferenceByID(achievementID)
-	if err != nil { return errors.New("achievement not found") }
-
-	// 3. Validasi Hak Akses (Apakah mahasiswa ini bimbingan dosen tersebut?)
-	// Pointer comparison advisorID
-	if ach.Student.AdvisorID == nil || *ach.Student.AdvisorID != lecturer.ID {
-		return errors.New("unauthorized: student is not your advisee")
+func (s *achievementService) Reject(id uuid.UUID, verifierID uuid.UUID, note string) error {
+	ref, err := s.repo.FindReferenceByID(id)
+	if err != nil {
+		return err
 	}
 
-	// 4. Update Status
-	return s.repo.VerifyAchievement(achievementID, userID)
+	if ref.Status != models.StatusSubmitted {
+		return errors.New("achievement is not in submitted status")
+	}
+
+	if note == "" {
+		return errors.New("rejection note is required")
+	}
+
+	return s.repo.Reject(id, note)
 }
 
-func (s *achievementService) RejectAchievement(userID uuid.UUID, achievementID uuid.UUID, note string) error {
-	// 1. Validasi Dosen
-	lecturer, err := s.repo.FindLecturerByUserID(userID)
-	if err != nil { return errors.New("lecturer profile not found") }
-
-	// 2. Ambil Achievement
-	ach, err := s.repo.FindReferenceByID(achievementID)
-	if err != nil { return errors.New("achievement not found") }
-
-	// 3. Validasi Hak Akses
-	if ach.Student.AdvisorID == nil || *ach.Student.AdvisorID != lecturer.ID {
-		return errors.New("unauthorized: student is not your advisee")
+func (s *achievementService) Delete(id uuid.UUID, studentID uuid.UUID) error {
+	ref, err := s.repo.FindReferenceByID(id)
+	if err != nil {
+		return err
 	}
 
-	// 4. Update Status & Note
-	return s.repo.RejectAchievement(achievementID, note)
+	if ref.StudentID != studentID {
+		return errors.New("unauthorized")
+	}
+
+	if ref.Status != models.StatusDraft {
+		return errors.New("cannot delete submitted or verified achievement")
+	}
+
+	return s.repo.SoftDelete(id)
+}
+
+func (s *achievementService) AddAttachment(id uuid.UUID, studentID uuid.UUID, fileName, fileURL string) error {
+	ref, err := s.repo.FindReferenceByID(id)
+	if err != nil {
+		return err
+	}
+
+	if ref.StudentID != studentID {
+		return errors.New("unauthorized")
+	}
+
+	if ref.Status != models.StatusDraft {
+		return errors.New("can only add attachments to draft")
+	}
+
+	attachment := models.Attachment{
+		FileName:   fileName,
+		FileURL:    fileURL,
+		FileType:   "unknown",
+		UploadedAt: time.Now(),
+	}
+
+	return s.repo.AddAttachment(ref.MongoAchievementID, attachment)
 }
