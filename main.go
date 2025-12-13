@@ -11,6 +11,7 @@ import (
 	"gouas/helper"
 	"gouas/route"
 	"log"
+	"os" // [BARU] Tambahkan OS untuk cek folder
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -45,11 +46,9 @@ func seedDatabase(db *gorm.DB) {
 			var perm models.Permission
 			// Cek apakah permission sudah ada
 			if err := db.Where("name = ?", permName).First(&perm).Error; err != nil {
-				// Resource & Action simple parsing (achievement:create -> resource: achievement, action: create)
-				// Ini simplifikasi string split
 				perm = models.Permission{
 					Name:        permName,
-					Resource:    permName, // Bisa diparsing lebih rapi jika mau
+					Resource:    permName,
 					Action:      "access",
 					Description: "Auto generated",
 				}
@@ -61,12 +60,11 @@ func seedDatabase(db *gorm.DB) {
 		// 2. Buat Role dan Assign Permission
 		var role models.Role
 		if err := db.Where("name = ?", roleName).Preload("Permissions").First(&role).Error; err != nil {
-			// Jika role belum ada, buat baru dengan permissions
 			newRole := models.Role{Name: roleName, Permissions: permissions}
 			db.Create(&newRole)
 			fmt.Printf("[SEED] Role created: %s with permissions %v\n", roleName, permNames)
 		} else {
-			// Jika role sudah ada, pastikan permissions terupdate (untuk development)
+			// Update permissions jika sudah ada
 			db.Model(&role).Association("Permissions").Replace(permissions)
 			fmt.Printf("[SEED] Role updated: %s permissions refreshed\n", roleName)
 		}
@@ -108,7 +106,7 @@ func main() {
 	// 2. Database Connection
 	database.ConnectPostgres()
 	database.ConnectMongo()
-	
+
 	// Migration
 	database.Migrate()
 
@@ -142,6 +140,15 @@ func main() {
 
 	app.Use(logger.New())
 	app.Use(cors.New())
+
+	// --- [BARU] CONFIG STATIC FILES ---
+	// 1. Pastikan folder uploads ada
+	if _, err := os.Stat("./uploads"); os.IsNotExist(err) {
+		os.Mkdir("./uploads", 0755)
+	}
+	// 2. Buka akses URL /uploads agar mengarah ke folder ./uploads
+	app.Static("/uploads", "./uploads")
+	// ----------------------------------
 
 	// 6. SWAGGER ROUTE
 	app.Get("/swagger/*", swagger.HandlerDefault)
