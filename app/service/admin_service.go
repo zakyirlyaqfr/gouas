@@ -30,21 +30,28 @@ func NewAdminService(adminRepo repository.AdminRepository) AdminService {
 	return &adminService{adminRepo}
 }
 
-// ... import "fmt" jangan lupa ditambahkan di atas
-
+// === LOGIC UTAMA DISINI ===
 func (s *adminService) CreateUser(username, email, password, fullName, roleName string) (models.User, error) {
+	// 1. Hash Password
 	hashedPassword, err := helper.HashPassword(password)
 	if err != nil {
 		return models.User{}, err
 	}
 
+	// 2. Cari Role ID
 	role, err := s.adminRepo.FindRoleByName(roleName)
 	if err != nil {
-		return models.User{}, errors.New("role not found")
+		return models.User{}, errors.New("role not found (pastikan 'Mahasiswa' atau 'Dosen Wali')")
 	}
 
+	// 3. Create User di Tabel Users
 	newUser := models.User{
-		Username: username, Email: email, PasswordHash: hashedPassword, FullName: fullName, RoleID: role.ID, IsActive: true,
+		Username:     username,
+		Email:        email,
+		PasswordHash: hashedPassword,
+		FullName:     fullName,
+		RoleID:       role.ID,
+		IsActive:     true,
 	}
 
 	createdUser, err := s.adminRepo.CreateUser(newUser)
@@ -52,49 +59,57 @@ func (s *adminService) CreateUser(username, email, password, fullName, roleName 
 		return models.User{}, err
 	}
 
-	// --- DEBUG LOG ---
-	fmt.Printf("[DEBUG] User Created: %s | Role Input: '%s'\n", username, roleName)
+	fmt.Printf("[DEBUG] User Created: %s (ID: %s) | Role: %s\n", username, createdUser.ID, roleName)
 
-	// --- AUTO CREATE PROFILE LOGIC ---
+	// 4. AUTO-CREATE PROFILE (Logic Otomatis)
+	// Kita generate angka random untuk NIM/NIP sementara
 	randSrc := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(randSrc)
-	randomCode := strconv.Itoa(r.Intn(90000) + 10000)
+	randomCode := strconv.Itoa(r.Intn(90000) + 10000) // Contoh: 48291
 
 	switch roleName {
 	case "Mahasiswa":
-		fmt.Println("[DEBUG] Masuk logic create Profile Mahasiswa...")
+		// Buat Struct Student
 		student := models.Student{
-			UserID:       createdUser.ID,
-			StudentID:    "NIM-" + username + "-" + randomCode,
-			ProgramStudy: "Informatika",
+			UserID:       createdUser.ID,                       // Link ke User yang baru dibuat
+			NIM:    "NIM-" + username + "-" + randomCode, // Generate NIM String
+			ProgramStudy: "Informatika",                        // Default sementara
 			AcademicYear: "2025",
 		}
-		err := s.adminRepo.CreateStudentProfile(student)
-		if err != nil {
-			fmt.Printf("[ERROR] Gagal create profile: %v\n", err)
-		} else {
-			fmt.Println("[DEBUG] Sukses create profile Mahasiswa")
+		
+		// Simpan ke Tabel Students
+		if err := s.adminRepo.CreateStudentProfile(student); err != nil {
+			// Jika gagal buat profile, idealnya user juga dihapus (rollback manual)
+			fmt.Printf("[ERROR] Gagal membuat profile Mahasiswa: %v\n", err)
+			s.adminRepo.DeleteUser(createdUser.ID) 
+			return models.User{}, errors.New("failed to create student profile, rolling back user")
 		}
+		fmt.Println("[DEBUG] Sukses create profile Mahasiswa di tabel students")
+
 	case "Dosen Wali":
-		fmt.Println("[DEBUG] Masuk logic create Profile Dosen...")
+		// Buat Struct Lecturer
 		lecturer := models.Lecturer{
 			UserID:     createdUser.ID,
-			LecturerID: "NIP-" + username + "-" + randomCode,
+			NIP: "NIP-" + username + "-" + randomCode,
 			Department: "Informatika",
 		}
-		s.adminRepo.CreateLecturerProfile(lecturer)
-	default:
-		fmt.Printf("[DEBUG] Role '%s' tidak cocok dengan 'Mahasiswa' atau 'Dosen Wali', profile skip.\n", roleName)
+		
+		// Simpan ke Tabel Lecturers
+		if err := s.adminRepo.CreateLecturerProfile(lecturer); err != nil {
+			fmt.Printf("[ERROR] Gagal membuat profile Dosen: %v\n", err)
+			s.adminRepo.DeleteUser(createdUser.ID)
+			return models.User{}, errors.New("failed to create lecturer profile, rolling back user")
+		}
+		fmt.Println("[DEBUG] Sukses create profile Dosen di tabel lecturers")
 	}
 
 	return createdUser, nil
 }
 
+// ... Fungsi sisanya (AssignRole, GetAllUsers, dll) biarkan sama ...
 func (s *adminService) AssignRole(userID uuid.UUID, roleName string) error {
 	role, err := s.adminRepo.FindRoleByName(roleName)
-	if err != nil {
-		return errors.New("role not found")
-	}
+	if err != nil { return errors.New("role not found") }
 	return s.adminRepo.UpdateUserRole(userID, role.ID)
 }
 
@@ -108,9 +123,7 @@ func (s *adminService) GetUserDetail(id uuid.UUID) (*models.User, error) {
 
 func (s *adminService) UpdateUser(id uuid.UUID, fullName, email string) error {
 	user, err := s.adminRepo.FindUserByID(id)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	user.FullName = fullName
 	user.Email = email
 	return s.adminRepo.UpdateUser(*user)

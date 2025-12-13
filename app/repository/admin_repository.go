@@ -15,7 +15,8 @@ type AdminRepository interface {
 	FindUserByID(id uuid.UUID) (*models.User, error)
 	UpdateUser(user models.User) error
 	DeleteUser(id uuid.UUID) error
-	// NEW: Helper untuk auto-create profile
+	
+	// --- NEW: Helper untuk auto-create profile ---
 	CreateStudentProfile(student models.Student) error
 	CreateLecturerProfile(lecturer models.Lecturer) error
 }
@@ -27,6 +28,9 @@ type adminRepository struct {
 func NewAdminRepository(db *gorm.DB) AdminRepository {
 	return &adminRepository{db}
 }
+
+// ... Fungsi-fungsi User standar (CreateUser, FindRoleByName, dll) biarkan sama ...
+// Saya tulis ulang yang standar agar anda tidak bingung copy-pastenya
 
 func (r *adminRepository) CreateUser(user models.User) (models.User, error) {
 	err := r.db.Create(&user).Error
@@ -60,10 +64,12 @@ func (r *adminRepository) UpdateUser(user models.User) error {
 }
 
 func (r *adminRepository) DeleteUser(id uuid.UUID) error {
+	// Hapus User (Profile akan terhapus otomatis karena constraint ON DELETE CASCADE di database)
 	return r.db.Delete(&models.User{}, "id = ?", id).Error
 }
 
 // --- NEW IMPLEMENTATION ---
+
 func (r *adminRepository) CreateStudentProfile(student models.Student) error {
 	return r.db.Create(&student).Error
 }
