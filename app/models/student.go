@@ -17,6 +17,10 @@ type Student struct {
 
 	ProgramStudy string    `gorm:"type:varchar(100)"`
 	AcademicYear string    `gorm:"type:varchar(10)"`
+
+	// [BARU] Kolom Poin Gamifikasi
+	TotalPoints  int       `gorm:"default:0"`
+
 	AdvisorID    *uuid.UUID `gorm:"type:uuid"`
 	Advisor      *Lecturer  `gorm:"foreignKey:AdvisorID"`
 

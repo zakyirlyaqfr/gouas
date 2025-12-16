@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// --- MOCK REPOSITORY ---
+// --- MOCK ACHIEVEMENT REPOSITORY ---
 type MockAchievementRepo struct {
 	mock.Mock
 }
@@ -56,22 +56,29 @@ func (m *MockAchievementRepo) SoftDelete(id uuid.UUID) error {
 	return args.Error(0)
 }
 
-// --- NEW METHODS MOCK (Fix Error InvalidIfaceAssign) ---
 func (m *MockAchievementRepo) FindAllReferences() ([]models.AchievementReference, error) {
 	args := m.Called()
-	if args.Get(0) == nil { return nil, args.Error(1) }
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).([]models.AchievementReference), args.Error(1)
 }
 
 func (m *MockAchievementRepo) FindReferencesByStudentID(studentID uuid.UUID) ([]models.AchievementReference, error) {
 	args := m.Called(studentID)
-	if args.Get(0) == nil { return nil, args.Error(1) }
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).([]models.AchievementReference), args.Error(1)
 }
 
+// [PERBAIKAN UTAMA DI SINI]
+// Ubah return type dari map[string]interface{} menjadi *models.Achievement
 func (m *MockAchievementRepo) GetMongoDetail(mongoID string) (*models.Achievement, error) {
 	args := m.Called(mongoID)
-	if args.Get(0) == nil { return nil, args.Error(1) }
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*models.Achievement), args.Error(1)
 }
 
@@ -80,11 +87,52 @@ func (m *MockAchievementRepo) UpdateMongo(mongoID string, data models.Achievemen
 	return args.Error(0)
 }
 
+// --- MOCK STUDENT REPOSITORY ---
+type MockStudentRepo struct {
+	mock.Mock
+}
+
+func (m *MockStudentRepo) FindAll() ([]models.Student, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.Student), args.Error(1)
+}
+
+func (m *MockStudentRepo) FindByID(id uuid.UUID) (*models.Student, error) {
+	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Student), args.Error(1)
+}
+
+func (m *MockStudentRepo) FindByUserID(userID uuid.UUID) (*models.Student, error) {
+	args := m.Called(userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Student), args.Error(1)
+}
+
+func (m *MockStudentRepo) UpdateAdvisor(studentID uuid.UUID, advisorID uuid.UUID) error {
+	args := m.Called(studentID, advisorID)
+	return args.Error(0)
+}
+
+func (m *MockStudentRepo) AddPoints(studentID uuid.UUID, points int) error {
+	args := m.Called(studentID, points)
+	return args.Error(0)
+}
+
 // --- TESTS ---
 
 func TestCreateAchievement_Success(t *testing.T) {
 	mockRepo := new(MockAchievementRepo)
-	svc := service.NewAchievementService(mockRepo)
+	mockStudentRepo := new(MockStudentRepo)
+	
+	svc := service.NewAchievementService(mockRepo, mockStudentRepo)
 
 	studentID := uuid.New()
 	input := models.Achievement{Title: "Juara 1", AchievementType: "Competition"}
@@ -101,7 +149,8 @@ func TestCreateAchievement_Success(t *testing.T) {
 
 func TestSubmitAchievement_Success(t *testing.T) {
 	mockRepo := new(MockAchievementRepo)
-	svc := service.NewAchievementService(mockRepo)
+	mockStudentRepo := new(MockStudentRepo)
+	svc := service.NewAchievementService(mockRepo, mockStudentRepo)
 
 	id := uuid.New()
 	studentID := uuid.New()
@@ -119,24 +168,35 @@ func TestSubmitAchievement_Success(t *testing.T) {
 
 func TestVerifyAchievement_Success(t *testing.T) {
 	mockRepo := new(MockAchievementRepo)
-	svc := service.NewAchievementService(mockRepo)
+	mockStudentRepo := new(MockStudentRepo)
+	svc := service.NewAchievementService(mockRepo, mockStudentRepo)
 
 	id := uuid.New()
 	verifierID := uuid.New()
+	studentID := uuid.New()
 
+	// 1. Mock FindReference
 	mockRepo.On("FindReferenceByID", id).Return(&models.AchievementReference{
-		ID: id, Status: models.StatusSubmitted,
+		ID: id, StudentID: studentID, Status: models.StatusSubmitted,
 	}, nil)
 
+	// 2. Mock Verify Repo
 	mockRepo.On("Verify", id, verifierID).Return(nil)
 
+	// 3. Mock AddPoints
+	mockStudentRepo.On("AddPoints", studentID, 10).Return(nil)
+
 	err := svc.Verify(id, verifierID)
+	
 	assert.NoError(t, err)
+	mockRepo.AssertExpectations(t)
+	mockStudentRepo.AssertExpectations(t)
 }
 
 func TestRejectAchievement_Success(t *testing.T) {
 	mockRepo := new(MockAchievementRepo)
-	svc := service.NewAchievementService(mockRepo)
+	mockStudentRepo := new(MockStudentRepo)
+	svc := service.NewAchievementService(mockRepo, mockStudentRepo)
 
 	id := uuid.New()
 	verifierID := uuid.New()

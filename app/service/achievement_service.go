@@ -24,15 +24,22 @@ type AchievementService interface {
 }
 
 type achievementService struct {
-	repo repository.AchievementRepository
+	repo        repository.AchievementRepository
+	studentRepo repository.StudentRepository // [BARU] Inject StudentRepo
 }
 
-func NewAchievementService(repo repository.AchievementRepository) AchievementService {
-	return &achievementService{repo}
+// [UBAH] Constructor menerima StudentRepository juga
+func NewAchievementService(repo repository.AchievementRepository, studentRepo repository.StudentRepository) AchievementService {
+	return &achievementService{
+		repo:        repo,
+		studentRepo: studentRepo,
+	}
 }
 
 func (s *achievementService) Create(studentID uuid.UUID, data models.Achievement) (*models.AchievementReference, error) {
-	if data.Title == "" || data.AchievementType == "" { return nil, errors.New("title and type are required") }
+	if data.Title == "" || data.AchievementType == "" {
+		return nil, errors.New("title and type are required")
+	}
 	return s.repo.Create(data, studentID)
 }
 
@@ -44,11 +51,24 @@ func (s *achievementService) Submit(id uuid.UUID, studentID uuid.UUID) error {
 	return s.repo.UpdateStatus(id, models.StatusSubmitted)
 }
 
+// [UBAH] Logic Verify menambahkan Poin
 func (s *achievementService) Verify(id uuid.UUID, verifierID uuid.UUID) error {
+	// 1. Ambil data untuk dapat StudentID
 	ref, err := s.repo.FindReferenceByID(id)
 	if err != nil { return err }
-	if ref.Status != models.StatusSubmitted { return errors.New("achievement is not in submitted status") }
-	return s.repo.Verify(id, verifierID)
+	
+	if ref.Status != models.StatusSubmitted { 
+		return errors.New("achievement is not in submitted status") 
+	}
+
+	// 2. Update Status jadi Verified
+	if err := s.repo.Verify(id, verifierID); err != nil {
+		return err
+	}
+
+	// 3. [BARU] Tambah Poin (Misal flat 10 poin)
+	points := 10
+	return s.studentRepo.AddPoints(ref.StudentID, points)
 }
 
 func (s *achievementService) Reject(id uuid.UUID, verifierID uuid.UUID, note string) error {
@@ -81,12 +101,8 @@ func (s *achievementService) AddAttachment(id uuid.UUID, studentID uuid.UUID, fi
 func (s *achievementService) GetAll(role string, userID uuid.UUID) ([]models.AchievementReference, error) {
 	// Jika mahasiswa, hanya lihat punya sendiri
 	if role == "Mahasiswa" {
-		// Asumsi UserID == StudentID (perlu mapping di real app jika table pisah)
-		// Kita anggap logic mapping ada di controller atau user_id di students table
-		// Untuk simplifikasi, kita asumsikan studentRepo sudah handle
 		return s.repo.FindReferencesByStudentID(userID)
 	}
-	// Admin & Dosen Wali bisa lihat semua (atau filter by advisee untuk dosen - simplified to all)
 	return s.repo.FindAllReferences()
 }
 
@@ -118,9 +134,9 @@ func (s *achievementService) GetHistory(id uuid.UUID) (map[string]interface{}, e
 
 	return map[string]interface{}{
 		"current_status": ref.Status,
-		"created_at": ref.CreatedAt,
-		"submitted_at": ref.SubmittedAt,
-		"verified_at": ref.VerifiedAt,
-		"rejected_note": ref.RejectionNote,
+		"created_at":     ref.CreatedAt,
+		"submitted_at":   ref.SubmittedAt,
+		"verified_at":    ref.VerifiedAt,
+		"rejected_note":  ref.RejectionNote,
 	}, nil
 }

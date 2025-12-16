@@ -11,7 +11,7 @@ import (
 	"gouas/helper"
 	"gouas/route"
 	"log"
-	"os" // [BARU] Tambahkan OS untuk cek folder
+	"os"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -128,7 +128,10 @@ func main() {
 	// 4. Dependency Injection (Service)
 	authSvc := service.NewAuthService(authRepo)
 	adminSvc := service.NewAdminService(adminRepo)
-	achievementSvc := service.NewAchievementService(achievementRepo)
+
+	// [UBAH] Inject studentRepo ke achievementService
+	achievementSvc := service.NewAchievementService(achievementRepo, studentRepo)
+
 	studentSvc := service.NewStudentService(studentRepo)
 	lecturerSvc := service.NewLecturerService(lecturerRepo)
 	reportSvc := service.NewReportService(reportRepo)

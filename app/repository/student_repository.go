@@ -12,6 +12,9 @@ type StudentRepository interface {
 	FindByID(id uuid.UUID) (*models.Student, error)
 	FindByUserID(userID uuid.UUID) (*models.Student, error)
 	UpdateAdvisor(studentID uuid.UUID, advisorID uuid.UUID) error
+	
+	// [BARU] Method Tambah Poin
+	AddPoints(studentID uuid.UUID, points int) error
 }
 
 type studentRepository struct {
@@ -42,4 +45,10 @@ func (r *studentRepository) FindByUserID(userID uuid.UUID) (*models.Student, err
 
 func (r *studentRepository) UpdateAdvisor(studentID uuid.UUID, advisorID uuid.UUID) error {
 	return r.db.Model(&models.Student{}).Where("id = ?", studentID).Update("advisor_id", advisorID).Error
+}
+
+// [BARU] Implementasi Tambah Poin (Atomic Update)
+func (r *studentRepository) AddPoints(studentID uuid.UUID, points int) error {
+	return r.db.Model(&models.Student{}).Where("id = ?", studentID).
+		Update("total_points", gorm.Expr("total_points + ?", points)).Error
 }
