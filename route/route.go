@@ -34,52 +34,66 @@ func InitRoutes(
 	// 5.1 AUTHENTICATION
 	// =========================================================================
 	// ... code sebelumnya ...
-    auth := api.Group("/auth")
+	auth := api.Group("/auth")
 
-    auth.Post("/login", func(c *fiber.Ctx) error {
-        var input struct {
-            Username string `json:"username"`
-            Password string `json:"password"`
-        }
-        if err := c.BodyParser(&input); err != nil {
-            return jsonResponse(c, 400, "error", "Invalid input", nil)
-        }
-        
-        // Panggil service yang sekarang mengembalikan 2 token
-        accessToken, refreshToken, err := authService.Login(input.Username, input.Password)
-        if err != nil {
-            return jsonResponse(c, 401, "error", err.Error(), nil)
-        }
-        
-        return jsonResponse(c, 200, "success", "Login successful", fiber.Map{
-            "accessToken":  accessToken,
-            "refreshToken": refreshToken,
-        })
-    })
+	auth.Post("/login", func(c *fiber.Ctx) error {
+		var input struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return jsonResponse(c, 400, "error", "Invalid input", nil)
+		}
 
-    auth.Post("/refresh", func(c *fiber.Ctx) error {
-        // Input berupa JSON: { "refreshToken": "..." }
-        var input struct {
-            RefreshToken string `json:"refreshToken"`
-        }
-        if err := c.BodyParser(&input); err != nil {
-            return jsonResponse(c, 400, "error", "Invalid input", nil)
-        }
+		// Panggil service yang sekarang mengembalikan 2 token
+		accessToken, refreshToken, err := authService.Login(input.Username, input.Password)
+		if err != nil {
+			return jsonResponse(c, 401, "error", err.Error(), nil)
+		}
 
-        newAccess, newRefresh, err := authService.Refresh(input.RefreshToken)
-        if err != nil {
-            return jsonResponse(c, 401, "error", err.Error(), nil)
-        }
+		return jsonResponse(c, 200, "success", "Login successful", fiber.Map{
+			"accessToken":  accessToken,
+			"refreshToken": refreshToken,
+		})
+	})
 
-        return jsonResponse(c, 200, "success", "Token refreshed", fiber.Map{
-            "accessToken":  newAccess,
-            "refreshToken": newRefresh,
-        })
-    })
-    // ... sisanya sama ...
+	auth.Post("/refresh", func(c *fiber.Ctx) error {
+		var input struct {
+			RefreshToken string `json:"refreshToken"`
+		}
+		if err := c.BodyParser(&input); err != nil {
+			return jsonResponse(c, 400, "error", "Invalid input", nil)
+		}
+
+		// [PERBAIKAN] Service Refresh sekarang hanya mengembalikan (NewAccessToken, Error)
+		// Karena Refresh Token ID tidak berubah di DB (tetap valid 24 jam)
+		newAccess, err := authService.Refresh(input.RefreshToken)
+		if err != nil {
+			return jsonResponse(c, 401, "error", err.Error(), nil)
+		}
+
+		return jsonResponse(c, 200, "success", "Token refreshed", fiber.Map{
+			"accessToken":  newAccess,
+			"refreshToken": input.RefreshToken, // Kita kembalikan token lama karena masih valid
+		})
+	})
+	// ... sisanya sama ...
 
 	auth.Post("/logout", func(c *fiber.Ctx) error {
-		return jsonResponse(c, 200, "success", "Logged out successfully", nil)
+		// Ambil User ID dari token yang sedang login
+		authData, err := middleware.CheckAuth(c.Get("Authorization"))
+		if err != nil {
+			return jsonResponse(c, 401, "error", "Unauthorized", nil)
+		}
+
+		userID, _ := uuid.Parse(authData.UserID)
+
+		// Panggil Service Logout (Set NULL di DB)
+		if err := authService.Logout(userID); err != nil {
+			return jsonResponse(c, 500, "error", err.Error(), nil)
+		}
+
+		return jsonResponse(c, 200, "success", "Logged out successfully (All tokens revoked)", nil)
 	})
 
 	auth.Get("/profile", func(c *fiber.Ctx) error {

@@ -12,11 +12,15 @@ type User struct {
 	Email        string    `gorm:"type:varchar(100);unique;not null"`
 	PasswordHash string    `gorm:"type:varchar(255);not null"`
 	FullName     string    `gorm:"type:varchar(100);not null"`
-	
+
 	RoleID       uuid.UUID `gorm:"type:uuid;not null"`
 	Role         Role      `gorm:"foreignKey:RoleID"`
-	
-	IsActive     bool      `gorm:"default:true"`
-	CreatedAt    time.Time `gorm:"autoCreateTime"`
-	UpdatedAt    time.Time `gorm:"autoUpdateTime"`
+
+	// [BARU] Menyimpan ID Token yang valid saat ini (Whitelist)
+	CurrentAccessTokenID  *uuid.UUID `gorm:"type:uuid"`
+	CurrentRefreshTokenID *uuid.UUID `gorm:"type:uuid"`
+
+	IsActive  bool      `gorm:"default:true"`
+	CreatedAt time.Time `gorm:"autoCreateTime"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime"`
 }

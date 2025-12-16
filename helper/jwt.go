@@ -13,45 +13,40 @@ type JWTClaims struct {
 	UserID      uuid.UUID `json:"user_id"`
 	Role        string    `json:"role"`
 	Permissions []string  `json:"permissions"`
+	TokenID     uuid.UUID `json:"jti"` // [BARU] ID Unik Token
 	jwt.RegisteredClaims
 }
 
-// GenerateTokens membuat Access Token (15 Menit) dan Refresh Token (30 Menit)
-func GenerateTokens(userID uuid.UUID, roleName string, permissions []string) (string, string, error) {
-	// 1. Create Access Token (Short Lived - 15 Menit)
-	accessClaims := JWTClaims{
+// GenerateAccessToken membuat token pendek (15 menit)
+func GenerateAccessToken(userID uuid.UUID, roleName string, permissions []string, tokenID uuid.UUID) (string, error) {
+	claims := JWTClaims{
 		UserID:      userID,
 		Role:        roleName,
 		Permissions: permissions,
+		TokenID:     tokenID, // Simpan ID
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)), // UBAH KE 15 MENIT
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)), // 15 Menit
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "gouas-backend",
 		},
 	}
-	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
-	accessTokenString, err := accessToken.SignedString([]byte(config.GetEnv("JWT_SECRET", "secret")))
-	if err != nil {
-		return "", "", err
-	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(config.GetEnv("JWT_SECRET", "secret")))
+}
 
-	// 2. Create Refresh Token (Long Lived - 30 Menit)
-	// Refresh token biasanya cukup membawa identitas user saja (UserID)
-	refreshClaims := JWTClaims{
-		UserID: userID,
+// GenerateRefreshToken membuat token panjang (24 jam)
+func GenerateRefreshToken(userID uuid.UUID, tokenID uuid.UUID) (string, error) {
+	claims := JWTClaims{
+		UserID:  userID,
+		TokenID: tokenID, // Simpan ID
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Minute)), // UBAH KE 30 MENIT
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)), // 24 Jam
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "gouas-backend",
 		},
 	}
-	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
-	refreshTokenString, err := refreshToken.SignedString([]byte(config.GetEnv("JWT_SECRET", "secret")))
-	if err != nil {
-		return "", "", err
-	}
-
-	return accessTokenString, refreshTokenString, nil
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(config.GetEnv("JWT_SECRET", "secret")))
 }
 
 func ValidateJWT(tokenString string) (*JWTClaims, error) {
