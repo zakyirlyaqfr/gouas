@@ -33,26 +33,50 @@ func InitRoutes(
 	// =========================================================================
 	// 5.1 AUTHENTICATION
 	// =========================================================================
-	auth := api.Group("/auth")
+	// ... code sebelumnya ...
+    auth := api.Group("/auth")
 
-	auth.Post("/login", func(c *fiber.Ctx) error {
-		var input struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
-		}
-		if err := c.BodyParser(&input); err != nil {
-			return jsonResponse(c, 400, "error", "Invalid input", nil)
-		}
-		token, err := authService.Login(input.Username, input.Password)
-		if err != nil {
-			return jsonResponse(c, 401, "error", err.Error(), nil)
-		}
-		return jsonResponse(c, 200, "success", "Login successful", map[string]string{"token": token})
-	})
+    auth.Post("/login", func(c *fiber.Ctx) error {
+        var input struct {
+            Username string `json:"username"`
+            Password string `json:"password"`
+        }
+        if err := c.BodyParser(&input); err != nil {
+            return jsonResponse(c, 400, "error", "Invalid input", nil)
+        }
+        
+        // Panggil service yang sekarang mengembalikan 2 token
+        accessToken, refreshToken, err := authService.Login(input.Username, input.Password)
+        if err != nil {
+            return jsonResponse(c, 401, "error", err.Error(), nil)
+        }
+        
+        return jsonResponse(c, 200, "success", "Login successful", fiber.Map{
+            "accessToken":  accessToken,
+            "refreshToken": refreshToken,
+        })
+    })
 
-	auth.Post("/refresh", func(c *fiber.Ctx) error {
-		return jsonResponse(c, 200, "success", "Token refreshed (mock)", nil)
-	})
+    auth.Post("/refresh", func(c *fiber.Ctx) error {
+        // Input berupa JSON: { "refreshToken": "..." }
+        var input struct {
+            RefreshToken string `json:"refreshToken"`
+        }
+        if err := c.BodyParser(&input); err != nil {
+            return jsonResponse(c, 400, "error", "Invalid input", nil)
+        }
+
+        newAccess, newRefresh, err := authService.Refresh(input.RefreshToken)
+        if err != nil {
+            return jsonResponse(c, 401, "error", err.Error(), nil)
+        }
+
+        return jsonResponse(c, 200, "success", "Token refreshed", fiber.Map{
+            "accessToken":  newAccess,
+            "refreshToken": newRefresh,
+        })
+    })
+    // ... sisanya sama ...
 
 	auth.Post("/logout", func(c *fiber.Ctx) error {
 		return jsonResponse(c, 200, "success", "Logged out successfully", nil)

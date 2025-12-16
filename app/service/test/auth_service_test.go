@@ -24,11 +24,20 @@ func (m *MockAuthRepo) FindByUsername(username string) (*models.User, error) {
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
+// [PERBAIKAN 1] Tambahkan method FindByID agar sesuai interface AuthRepository terbaru
+func (m *MockAuthRepo) FindByID(id uuid.UUID) (*models.User, error) {
+	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
 func TestLogin_Success(t *testing.T) {
 	mockRepo := new(MockAuthRepo)
 	authService := service.NewAuthService(mockRepo)
 
-	// Setup data dummy untuk test logic (ini memory data, bukan DB)
+	// Setup data dummy
 	password := "password123"
 	hashed, _ := helper.HashPassword(password)
 	
@@ -47,9 +56,12 @@ func TestLogin_Success(t *testing.T) {
 
 	mockRepo.On("FindByUsername", "mahasiswa1").Return(mockUser, nil)
 
-	token, err := authService.Login("mahasiswa1", password)
+	// [PERBAIKAN 2] Tangkap 3 variable (accessToken, refreshToken, err)
+	accessToken, refreshToken, err := authService.Login("mahasiswa1", password)
 
 	assert.NoError(t, err)
-	assert.NotEmpty(t, token)
+	assert.NotEmpty(t, accessToken, "Access Token tidak boleh kosong")
+	assert.NotEmpty(t, refreshToken, "Refresh Token tidak boleh kosong")
+	
 	mockRepo.AssertExpectations(t)
 }
