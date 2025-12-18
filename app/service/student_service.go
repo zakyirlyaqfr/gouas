@@ -1,41 +1,72 @@
 package service
 
 import (
-	"gouas/app/models"
 	"gouas/app/repository"
+	"gouas/helper"
+	"gouas/middleware"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
 
 type StudentService interface {
-	GetAll() ([]models.Student, error)
-	GetDetail(id uuid.UUID) (*models.Student, error)
-	AssignAdvisor(studentID, advisorID uuid.UUID) error
-	// NEW
-	GetProfileByUserID(userID uuid.UUID) (*models.Student, error)
+	GetAll(c *fiber.Ctx) error
+	GetDetail(c *fiber.Ctx) error
+	GetStudentAchievements(c *fiber.Ctx) error
+	AssignAdvisor(c *fiber.Ctx) error
 }
 
 type studentService struct {
-	repo repository.StudentRepository
+	repo    repository.StudentRepository
+	achRepo repository.AchievementRepository // Butuh akses ke achievement untuk endpoint get achievement
 }
 
-func NewStudentService(repo repository.StudentRepository) StudentService {
-	return &studentService{repo}
+// Perlu inject Achievement Repo juga jika endpoint get achievement ada di student route
+func NewStudentService(repo repository.StudentRepository, achRepo repository.AchievementRepository) StudentService {
+	return &studentService{repo: repo, achRepo: achRepo}
 }
 
-func (s *studentService) GetAll() ([]models.Student, error) {
-	return s.repo.FindAll()
+func (s *studentService) GetAll(c *fiber.Ctx) error {
+	students, err := s.repo.FindAll()
+	if err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "Student list", students))
 }
 
-func (s *studentService) GetDetail(id uuid.UUID) (*models.Student, error) {
-	return s.repo.FindByID(id)
+func (s *studentService) GetDetail(c *fiber.Ctx) error {
+	id, _ := uuid.Parse(c.Params("id"))
+	student, err := s.repo.FindByID(id)
+	if err != nil {
+		return c.Status(404).JSON(helper.APIResponse("error", "Not found", nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "Student detail", student))
 }
 
-func (s *studentService) AssignAdvisor(studentID, advisorID uuid.UUID) error {
-	return s.repo.UpdateAdvisor(studentID, advisorID)
+func (s *studentService) AssignAdvisor(c *fiber.Ctx) error {
+	authData, _ := middleware.CheckAuth(c.Get("Authorization"))
+	if authData.Role != "Admin" {
+		return c.Status(403).JSON(helper.APIResponse("error", "Forbidden", nil))
+	}
+
+	id, _ := uuid.Parse(c.Params("id"))
+	var input struct {
+		AdvisorID string `json:"advisorId"`
+	}
+	c.BodyParser(&input)
+	advID, _ := uuid.Parse(input.AdvisorID)
+
+	if err := s.repo.UpdateAdvisor(id, advID); err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "Advisor assigned", nil))
 }
 
-// --- NEW IMPL ---
-func (s *studentService) GetProfileByUserID(userID uuid.UUID) (*models.Student, error) {
-	return s.repo.FindByUserID(userID)
+func (s *studentService) GetStudentAchievements(c *fiber.Ctx) error {
+	id, _ := uuid.Parse(c.Params("id"))
+	data, err := s.achRepo.FindReferencesByStudentID(id)
+	if err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "Student achievements", data))
 }

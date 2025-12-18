@@ -1,17 +1,19 @@
 package service
 
 import (
-	"errors"
 	"gouas/app/repository"
 	"gouas/helper"
+	"gouas/middleware"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
 
 type AuthService interface {
-	Login(username, password string) (string, string, error)
-	Refresh(refreshToken string) (string, error) // Refresh Access Token
-	Logout(userID uuid.UUID) error               // Logout
+	Login(c *fiber.Ctx) error
+	Refresh(c *fiber.Ctx) error
+	Logout(c *fiber.Ctx) error
+	GetProfile(c *fiber.Ctx) error
 }
 
 type authService struct {
@@ -22,67 +24,108 @@ func NewAuthService(authRepo repository.AuthRepository) AuthService {
 	return &authService{authRepo}
 }
 
-func (s *authService) Login(username, password string) (string, string, error) {
-	// 1. Validasi User
-	user, err := s.authRepo.FindByUsername(username)
-	if err != nil { return "", "", errors.New("invalid credentials") }
-	if !helper.CheckPasswordHash(password, user.PasswordHash) { return "", "", errors.New("invalid credentials") }
-	if !user.IsActive { return "", "", errors.New("user is inactive") }
+func (s *authService) Login(c *fiber.Ctx) error {
+	var input struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(400).JSON(helper.APIResponse("error", "Invalid input", nil))
+	}
 
-	// 2. Generate ID Baru untuk Token
+	// 1. Cari user
+	user, err := s.authRepo.FindByUsername(input.Username)
+	if err != nil {
+		return c.Status(401).JSON(helper.APIResponse("error", "Invalid credentials", nil))
+	}
+
+	// 2. Cek Password
+	if !helper.CheckPasswordHash(input.Password, user.PasswordHash) {
+		return c.Status(401).JSON(helper.APIResponse("error", "Invalid credentials", nil))
+	}
+
+	// 3. Cek Active
+	if !user.IsActive {
+		return c.Status(401).JSON(helper.APIResponse("error", "User is inactive", nil))
+	}
+
+	// 4. Update Token ID di DB (Stateful)
 	newAccessID := uuid.New()
 	newRefreshID := uuid.New()
+	if err := s.authRepo.UpdateTokenIDs(user.ID, &newAccessID, &newRefreshID); err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
 
-	// 3. Simpan ID ke Database (Whitelist)
-	err = s.authRepo.UpdateTokenIDs(user.ID, &newAccessID, &newRefreshID)
-	if err != nil { return "", "", err }
-
-	// 4. Generate Token JWT
+	// 5. Generate Tokens
 	permissions := []string{}
 	for _, p := range user.Role.Permissions {
 		permissions = append(permissions, p.Name)
 	}
-
 	accessToken, _ := helper.GenerateAccessToken(user.ID, user.Role.Name, permissions, newAccessID)
 	refreshToken, _ := helper.GenerateRefreshToken(user.ID, newRefreshID)
 
-	return accessToken, refreshToken, nil
+	return c.Status(200).JSON(helper.APIResponse("success", "Login successful", fiber.Map{
+		"accessToken":  accessToken,
+		"refreshToken": refreshToken,
+	}))
 }
 
-func (s *authService) Refresh(refreshToken string) (string, error) {
-	// 1. Validasi Signature Refresh Token
-	claims, err := helper.ValidateJWT(refreshToken)
-	if err != nil { return "", errors.New("invalid refresh token") }
-
-	// 2. Cek DB: Apakah ID Refresh Token ini cocok dengan yang ada di DB?
-	user, err := s.authRepo.FindByID(claims.UserID)
-	if err != nil { return "", errors.New("user not found") }
-
-	if user.CurrentRefreshTokenID == nil || *user.CurrentRefreshTokenID != claims.TokenID {
-		return "", errors.New("refresh token invalid or revoked")
+func (s *authService) Refresh(c *fiber.Ctx) error {
+	var input struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(400).JSON(helper.APIResponse("error", "Invalid input", nil))
 	}
 
-	// 3. Generate ID Access Token BARU (Ini yang membuat access token lama mati!)
+	// 1. Validasi Token
+	claims, err := helper.ValidateJWT(input.RefreshToken)
+	if err != nil {
+		return c.Status(401).JSON(helper.APIResponse("error", "Invalid refresh token", nil))
+	}
+
+	// 2. Cek DB
+	user, err := s.authRepo.FindByID(claims.UserID)
+	if err != nil || user.CurrentRefreshTokenID == nil || *user.CurrentRefreshTokenID != claims.TokenID {
+		return c.Status(401).JSON(helper.APIResponse("error", "Refresh token revoked", nil))
+	}
+
+	// 3. Rotasi Access Token ID
 	newAccessID := uuid.New()
+	if err := s.authRepo.UpdateTokenIDs(user.ID, &newAccessID, user.CurrentRefreshTokenID); err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
 
-	// Update DB: Ganti Access ID, tapi biarkan Refresh ID (karena refresh token berlaku 24 jam)
-	// Kita kirim nil untuk refreshID di repo agar tidak diupdate/dihapus
-	// Tapi logika repo kita tadi perlu disesuaikan sedikit, atau kita bisa kirim CurrentRefreshTokenID lagi
-	err = s.authRepo.UpdateTokenIDs(user.ID, &newAccessID, user.CurrentRefreshTokenID) 
-	if err != nil { return "", err }
-
-	// 4. Buat Access Token Baru
+	// 4. Generate Access Token Baru
 	permissions := []string{}
 	for _, p := range user.Role.Permissions {
 		permissions = append(permissions, p.Name)
 	}
-	
-	newAccessToken, _ := helper.GenerateAccessToken(user.ID, user.Role.Name, permissions, newAccessID)
-	
-	return newAccessToken, nil
+	newAccess, _ := helper.GenerateAccessToken(user.ID, user.Role.Name, permissions, newAccessID)
+
+	return c.Status(200).JSON(helper.APIResponse("success", "Token refreshed", fiber.Map{
+		"accessToken":  newAccess,
+		"refreshToken": input.RefreshToken,
+	}))
 }
 
-func (s *authService) Logout(userID uuid.UUID) error {
-	// Set semua ID token jadi NULL -> Semua token hangus
-	return s.authRepo.UpdateTokenIDs(userID, nil, nil)
+func (s *authService) Logout(c *fiber.Ctx) error {
+	authData, err := middleware.CheckAuth(c.Get("Authorization"))
+	if err != nil {
+		return c.Status(401).JSON(helper.APIResponse("error", "Unauthorized", nil))
+	}
+	userID, _ := uuid.Parse(authData.UserID)
+
+	if err := s.authRepo.UpdateTokenIDs(userID, nil, nil); err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "Logged out successfully", nil))
+}
+
+func (s *authService) GetProfile(c *fiber.Ctx) error {
+	authData, err := middleware.CheckAuth(c.Get("Authorization"))
+	if err != nil {
+		return c.Status(401).JSON(helper.APIResponse("error", "Unauthorized", nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "User Profile", authData))
 }

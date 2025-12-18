@@ -40,11 +40,9 @@ func seedDatabase(db *gorm.DB) {
 	}
 
 	for roleName, permNames := range rolePermissions {
-		// 1. Buat Permission jika belum ada
 		var permissions []models.Permission
 		for _, permName := range permNames {
 			var perm models.Permission
-			// Cek apakah permission sudah ada
 			if err := db.Where("name = ?", permName).First(&perm).Error; err != nil {
 				perm = models.Permission{
 					Name:        permName,
@@ -57,20 +55,17 @@ func seedDatabase(db *gorm.DB) {
 			permissions = append(permissions, perm)
 		}
 
-		// 2. Buat Role dan Assign Permission
 		var role models.Role
 		if err := db.Where("name = ?", roleName).Preload("Permissions").First(&role).Error; err != nil {
 			newRole := models.Role{Name: roleName, Permissions: permissions}
 			db.Create(&newRole)
-			fmt.Printf("[SEED] Role created: %s with permissions %v\n", roleName, permNames)
+			fmt.Printf("[SEED] Role created: %s\n", roleName)
 		} else {
-			// Update permissions jika sudah ada
 			db.Model(&role).Association("Permissions").Replace(permissions)
-			fmt.Printf("[SEED] Role updated: %s permissions refreshed\n", roleName)
+			fmt.Printf("[SEED] Role updated: %s\n", roleName)
 		}
 	}
 
-	// 3. Seed Admin User
 	var adminRole models.Role
 	db.Where("name = ?", "Admin").First(&adminRole)
 
@@ -93,30 +88,17 @@ func seedDatabase(db *gorm.DB) {
 // @title Sistem Pelaporan Prestasi API
 // @version 1.0
 // @description API Documentation for GOUAS Project
-// @host localhost:3000
-// @BasePath /
-// @securityDefinitions.apikey BearerAuth
-// @in header
-// @name Authorization
 func main() {
-	// 1. Config & Logger
 	config.LoadEnv()
 	config.InitLogger()
-
-	// 2. Database Connection
 	database.ConnectPostgres()
 	database.ConnectMongo()
-
-	// Migration
 	database.Migrate()
 
-	// 3. Dependency Injection (Repository)
 	db := database.DB
 	mongoDB := database.MongoDB
 
-	// --- JALANKAN SEEDER DI SINI ---
 	seedDatabase(db)
-	// -------------------------------
 
 	authRepo := repository.NewAuthRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
@@ -125,18 +107,20 @@ func main() {
 	lecturerRepo := repository.NewLecturerRepository(db)
 	reportRepo := repository.NewReportRepository(db, mongoDB)
 
-	// 4. Dependency Injection (Service)
 	authSvc := service.NewAuthService(authRepo)
 	adminSvc := service.NewAdminService(adminRepo)
-
-	// [UBAH] Inject studentRepo ke achievementService
+	
+	// Inject studentRepo ke achievementService
 	achievementSvc := service.NewAchievementService(achievementRepo, studentRepo)
 
-	studentSvc := service.NewStudentService(studentRepo)
+	// [FIX] Inject achievementRepo ke studentService
+	studentSvc := service.NewStudentService(studentRepo, achievementRepo)
+	
 	lecturerSvc := service.NewLecturerService(lecturerRepo)
-	reportSvc := service.NewReportService(reportRepo)
+	
+	// [FIX] Inject achievementRepo ke reportService
+	reportSvc := service.NewReportService(reportRepo, achievementRepo)
 
-	// 5. Init Fiber App
 	app := fiber.New(fiber.Config{
 		AppName: "Sistem Pelaporan Prestasi v1.0",
 	})
@@ -144,22 +128,15 @@ func main() {
 	app.Use(logger.New())
 	app.Use(cors.New())
 
-	// --- [BARU] CONFIG STATIC FILES ---
-	// 1. Pastikan folder uploads ada
 	if _, err := os.Stat("./uploads"); os.IsNotExist(err) {
 		os.Mkdir("./uploads", 0755)
 	}
-	// 2. Buka akses URL /uploads agar mengarah ke folder ./uploads
 	app.Static("/uploads", "./uploads")
-	// ----------------------------------
 
-	// 6. SWAGGER ROUTE
 	app.Get("/swagger/*", swagger.HandlerDefault)
 
-	// 7. Route Initialization
 	route.InitRoutes(app, authSvc, adminSvc, achievementSvc, studentSvc, lecturerSvc, reportSvc)
 
-	// 8. Server Start
 	port := config.GetEnv("APP_PORT", "3000")
 	log.Printf("Swagger UI is available at http://localhost:%s/swagger/index.html", port)
 	log.Fatal(app.Listen(":" + port))

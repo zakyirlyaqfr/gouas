@@ -1,8 +1,6 @@
 package service
 
 import (
-	"errors"
-	"fmt"
 	"gouas/app/models"
 	"gouas/app/repository"
 	"gouas/helper"
@@ -10,16 +8,17 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 )
 
 type AdminService interface {
-	CreateUser(username, email, password, fullName, roleName string) (models.User, error)
-	AssignRole(userID uuid.UUID, roleName string) error
-	GetAllUsers() ([]models.User, error)
-	GetUserDetail(id uuid.UUID) (*models.User, error)
-	UpdateUser(id uuid.UUID, fullName, email string) error
-	DeleteUser(id uuid.UUID) error
+	CreateUser(c *fiber.Ctx) error
+	AssignRole(c *fiber.Ctx) error
+	GetAllUsers(c *fiber.Ctx) error
+	GetUserDetail(c *fiber.Ctx) error
+	UpdateUser(c *fiber.Ctx) error
+	DeleteUser(c *fiber.Ctx) error
 }
 
 type adminService struct {
@@ -30,105 +29,135 @@ func NewAdminService(adminRepo repository.AdminRepository) AdminService {
 	return &adminService{adminRepo}
 }
 
-// === LOGIC UTAMA DISINI ===
-func (s *adminService) CreateUser(username, email, password, fullName, roleName string) (models.User, error) {
-	// 1. Hash Password
-	hashedPassword, err := helper.HashPassword(password)
-	if err != nil {
-		return models.User{}, err
+func (s *adminService) CreateUser(c *fiber.Ctx) error {
+	var input struct {
+		Username string `json:"username"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		FullName string `json:"fullName"`
+		RoleName string `json:"roleName"`
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(400).JSON(helper.APIResponse("error", "Invalid input", nil))
 	}
 
-	// 2. Cari Role ID
-	role, err := s.adminRepo.FindRoleByName(roleName)
+	hashedPassword, err := helper.HashPassword(input.Password)
 	if err != nil {
-		return models.User{}, errors.New("role not found (pastikan 'Mahasiswa' atau 'Dosen Wali')")
+		return c.Status(500).JSON(helper.APIResponse("error", "Hashing failed", nil))
 	}
 
-	// 3. Create User di Tabel Users
+	role, err := s.adminRepo.FindRoleByName(input.RoleName)
+	if err != nil {
+		return c.Status(400).JSON(helper.APIResponse("error", "Role not found", nil))
+	}
+
 	newUser := models.User{
-		Username:     username,
-		Email:        email,
+		Username:     input.Username,
+		Email:        input.Email,
 		PasswordHash: hashedPassword,
-		FullName:     fullName,
+		FullName:     input.FullName,
 		RoleID:       role.ID,
 		IsActive:     true,
 	}
 
 	createdUser, err := s.adminRepo.CreateUser(newUser)
 	if err != nil {
-		return models.User{}, err
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
 	}
 
-	fmt.Printf("[DEBUG] User Created: %s (ID: %s) | Role: %s\n", username, createdUser.ID, roleName)
-
-	// 4. AUTO-CREATE PROFILE (Logic Otomatis)
-	// Kita generate angka random untuk NIM/NIP sementara
+	// AUTO-CREATE PROFILE
 	randSrc := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(randSrc)
-	randomCode := strconv.Itoa(r.Intn(90000) + 10000) // Contoh: 48291
+	randomCode := strconv.Itoa(r.Intn(90000) + 10000)
 
-	switch roleName {
+	switch input.RoleName {
 	case "Mahasiswa":
-		// Buat Struct Student
 		student := models.Student{
-			UserID:       createdUser.ID,                       // Link ke User yang baru dibuat
-			NIM:    "NIM-" + username + "-" + randomCode, // Generate NIM String
-			ProgramStudy: "Informatika",                        // Default sementara
+			UserID:       createdUser.ID,
+			NIM:          "NIM-" + input.Username + "-" + randomCode,
+			ProgramStudy: "Informatika",
 			AcademicYear: "2025",
 		}
-		
-		// Simpan ke Tabel Students
 		if err := s.adminRepo.CreateStudentProfile(student); err != nil {
-			// Jika gagal buat profile, idealnya user juga dihapus (rollback manual)
-			fmt.Printf("[ERROR] Gagal membuat profile Mahasiswa: %v\n", err)
-			s.adminRepo.DeleteUser(createdUser.ID) 
-			return models.User{}, errors.New("failed to create student profile, rolling back user")
+			s.adminRepo.DeleteUser(createdUser.ID)
+			return c.Status(500).JSON(helper.APIResponse("error", "Failed to create student profile", nil))
 		}
-		fmt.Println("[DEBUG] Sukses create profile Mahasiswa di tabel students")
-
 	case "Dosen Wali":
-		// Buat Struct Lecturer
 		lecturer := models.Lecturer{
 			UserID:     createdUser.ID,
-			NIP: "NIP-" + username + "-" + randomCode,
+			NIP:        "NIP-" + input.Username + "-" + randomCode,
 			Department: "Informatika",
 		}
-		
-		// Simpan ke Tabel Lecturers
 		if err := s.adminRepo.CreateLecturerProfile(lecturer); err != nil {
-			fmt.Printf("[ERROR] Gagal membuat profile Dosen: %v\n", err)
 			s.adminRepo.DeleteUser(createdUser.ID)
-			return models.User{}, errors.New("failed to create lecturer profile, rolling back user")
+			return c.Status(500).JSON(helper.APIResponse("error", "Failed to create lecturer profile", nil))
 		}
-		fmt.Println("[DEBUG] Sukses create profile Dosen di tabel lecturers")
 	}
 
-	return createdUser, nil
+	return c.Status(201).JSON(helper.APIResponse("success", "User created", createdUser))
 }
 
-// ... Fungsi sisanya (AssignRole, GetAllUsers, dll) biarkan sama ...
-func (s *adminService) AssignRole(userID uuid.UUID, roleName string) error {
-	role, err := s.adminRepo.FindRoleByName(roleName)
-	if err != nil { return errors.New("role not found") }
-	return s.adminRepo.UpdateUserRole(userID, role.ID)
+func (s *adminService) AssignRole(c *fiber.Ctx) error {
+	id, _ := uuid.Parse(c.Params("id"))
+	var input struct {
+		RoleName string `json:"roleName"`
+	}
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(400).JSON(helper.APIResponse("error", "Invalid input", nil))
+	}
+
+	role, err := s.adminRepo.FindRoleByName(input.RoleName)
+	if err != nil {
+		return c.Status(404).JSON(helper.APIResponse("error", "Role not found", nil))
+	}
+	if err := s.adminRepo.UpdateUserRole(id, role.ID); err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "Role updated", nil))
 }
 
-func (s *adminService) GetAllUsers() ([]models.User, error) {
-	return s.adminRepo.FindAllUsers()
+func (s *adminService) GetAllUsers(c *fiber.Ctx) error {
+	users, err := s.adminRepo.FindAllUsers()
+	if err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "User list", users))
 }
 
-func (s *adminService) GetUserDetail(id uuid.UUID) (*models.User, error) {
-	return s.adminRepo.FindUserByID(id)
-}
-
-func (s *adminService) UpdateUser(id uuid.UUID, fullName, email string) error {
+func (s *adminService) GetUserDetail(c *fiber.Ctx) error {
+	id, _ := uuid.Parse(c.Params("id"))
 	user, err := s.adminRepo.FindUserByID(id)
-	if err != nil { return err }
-	user.FullName = fullName
-	user.Email = email
-	return s.adminRepo.UpdateUser(*user)
+	if err != nil {
+		return c.Status(404).JSON(helper.APIResponse("error", "User not found", nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "User detail", user))
 }
 
-func (s *adminService) DeleteUser(id uuid.UUID) error {
-	return s.adminRepo.DeleteUser(id)
+func (s *adminService) UpdateUser(c *fiber.Ctx) error {
+	id, _ := uuid.Parse(c.Params("id"))
+	var input struct {
+		FullName string `json:"fullName"`
+		Email    string `json:"email"`
+	}
+	c.BodyParser(&input)
+
+	user, err := s.adminRepo.FindUserByID(id)
+	if err != nil {
+		return c.Status(404).JSON(helper.APIResponse("error", "User not found", nil))
+	}
+	user.FullName = input.FullName
+	user.Email = input.Email
+
+	if err := s.adminRepo.UpdateUser(*user); err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "User updated", nil))
+}
+
+func (s *adminService) DeleteUser(c *fiber.Ctx) error {
+	id, _ := uuid.Parse(c.Params("id"))
+	if err := s.adminRepo.DeleteUser(id); err != nil {
+		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	}
+	return c.Status(200).JSON(helper.APIResponse("success", "User deleted", nil))
 }

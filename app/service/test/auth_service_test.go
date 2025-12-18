@@ -1,17 +1,20 @@
 package test
 
 import (
+	"bytes"
+	"encoding/json"
 	"gouas/app/models"
 	"gouas/app/service"
 	"gouas/helper"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-// Mock Repository
 type MockAuthRepo struct {
 	mock.Mock
 }
@@ -32,21 +35,20 @@ func (m *MockAuthRepo) FindByID(id uuid.UUID) (*models.User, error) {
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-// [PERBAIKAN 1] Tambahkan Mock untuk UpdateTokenIDs agar sesuai interface baru
 func (m *MockAuthRepo) UpdateTokenIDs(userID uuid.UUID, accessID *uuid.UUID, refreshID *uuid.UUID) error {
-	// Kita gunakan mock.Anything di test case nanti untuk argument pointer
 	args := m.Called(userID, accessID, refreshID)
 	return args.Error(0)
 }
 
 func TestLogin_Success(t *testing.T) {
 	mockRepo := new(MockAuthRepo)
-	authService := service.NewAuthService(mockRepo)
+	authSvc := service.NewAuthService(mockRepo)
+	app := fiber.New()
+	app.Post("/login", authSvc.Login)
 
-	// Setup data dummy
 	password := "password123"
 	hashed, _ := helper.HashPassword(password)
-	userID := uuid.New() // Simpan ID agar konsisten
+	userID := uuid.New()
 
 	mockUser := &models.User{
 		ID:           userID,
@@ -61,20 +63,20 @@ func TestLogin_Success(t *testing.T) {
 		},
 	}
 
-	// Expectation 1: Cari User
 	mockRepo.On("FindByUsername", "mahasiswa1").Return(mockUser, nil)
-
-	// [PERBAIKAN 2] Expectation 2: Update Token IDs harus dipanggil saat Login
-	// Kita gunakan mock.Anything untuk parameter AccessID dan RefreshID karena itu digenerate random di service
 	mockRepo.On("UpdateTokenIDs", userID, mock.Anything, mock.Anything).Return(nil)
 
-	// Action
-	accessToken, refreshToken, err := authService.Login("mahasiswa1", password)
+	reqBody := map[string]string{
+		"username": "mahasiswa1",
+		"password": "password123",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 
-	// Assert
+	resp, err := app.Test(req)
+
 	assert.NoError(t, err)
-	assert.NotEmpty(t, accessToken, "Access Token tidak boleh kosong")
-	assert.NotEmpty(t, refreshToken, "Refresh Token tidak boleh kosong")
-	
+	assert.Equal(t, 200, resp.StatusCode)
 	mockRepo.AssertExpectations(t)
 }
