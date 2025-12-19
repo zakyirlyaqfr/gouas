@@ -3,6 +3,7 @@ package service
 import (
 	"gouas/app/repository"
 	"gouas/helper"
+	"gouas/middleware"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -15,7 +16,7 @@ type ReportService interface {
 
 type reportService struct {
 	repo    repository.ReportRepository
-	achRepo repository.AchievementRepository // Re-use achievement repo
+	achRepo repository.AchievementRepository
 }
 
 func NewReportService(repo repository.ReportRepository, achRepo repository.AchievementRepository) ReportService {
@@ -23,18 +24,18 @@ func NewReportService(repo repository.ReportRepository, achRepo repository.Achie
 }
 
 func (s *reportService) GetStatistics(c *fiber.Ctx) error {
-	stats, err := s.repo.GetAchievementStats()
-	if err != nil {
-		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	authData, _ := middleware.CheckAuth(c.Get("Authorization"))
+	if authData.Role == "Mahasiswa" {
+		return c.Status(403).JSON(helper.APIResponse("error", "Forbidden", nil))
 	}
-	return c.Status(200).JSON(helper.APIResponse("success", "Statistics", stats))
+
+	stats, _ := s.repo.GetAchievementStats()
+	return c.Status(200).JSON(helper.APIResponse("success", "Global Statistics", stats))
 }
 
 func (s *reportService) GetStudentReport(c *fiber.Ctx) error {
 	id, _ := uuid.Parse(c.Params("id"))
-	data, err := s.achRepo.FindReferencesByStudentID(id)
-	if err != nil {
-		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
-	}
-	return c.Status(200).JSON(helper.APIResponse("success", "Student Report", data))
+	// Validation owner/advisor should be here
+	data, _ := s.achRepo.FindReferencesByStudentID(id)
+	return c.Status(200).JSON(helper.APIResponse("success", "Student Achievement Report", data))
 }

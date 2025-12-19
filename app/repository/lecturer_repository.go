@@ -10,6 +10,7 @@ import (
 type LecturerRepository interface {
 	FindAll() ([]models.Lecturer, error)
 	FindByID(id uuid.UUID) (*models.Lecturer, error)
+	FindByUserID(userID uuid.UUID) (*models.Lecturer, error)
 	FindAdvisees(lecturerID uuid.UUID) ([]models.Student, error)
 }
 
@@ -30,6 +31,12 @@ func (r *lecturerRepository) FindAll() ([]models.Lecturer, error) {
 func (r *lecturerRepository) FindByID(id uuid.UUID) (*models.Lecturer, error) {
 	var lecturer models.Lecturer
 	err := r.db.Preload("User").First(&lecturer, "id = ?", id).Error
+	return &lecturer, err
+}
+
+func (r *lecturerRepository) FindByUserID(userID uuid.UUID) (*models.Lecturer, error) {
+	var lecturer models.Lecturer
+	err := r.db.Preload("User").Where("user_id = ?", userID).First(&lecturer).Error
 	return &lecturer, err
 }
 

@@ -20,23 +20,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// Fungsi untuk seeding data awal (Role, Permission & Admin)
 func seedDatabase(db *gorm.DB) {
-	// Definisi Role beserta Permission-nya sesuai SRS
 	rolePermissions := map[string][]string{
-		"Admin": {
-			"user:manage",
-		},
-		"Mahasiswa": {
-			"achievement:create",
-			"achievement:read",
-			"achievement:update",
-			"achievement:delete",
-		},
-		"Dosen Wali": {
-			"achievement:read",
-			"achievement:verify",
-		},
+		"Admin":      {"user:manage"},
+		"Mahasiswa":  {"achievement:create", "achievement:read", "achievement:update", "achievement:delete"},
+		"Dosen Wali": {"achievement:read", "achievement:verify"},
 	}
 
 	for roleName, permNames := range rolePermissions {
@@ -68,7 +56,6 @@ func seedDatabase(db *gorm.DB) {
 
 	var adminRole models.Role
 	db.Where("name = ?", "Admin").First(&adminRole)
-
 	var userExist models.User
 	if err := db.Where("username = ?", "admin").First(&userExist).Error; err != nil {
 		hash, _ := helper.HashPassword("admin123")
@@ -85,9 +72,6 @@ func seedDatabase(db *gorm.DB) {
 	}
 }
 
-// @title Sistem Pelaporan Prestasi API
-// @version 1.0
-// @description API Documentation for GOUAS Project
 func main() {
 	config.LoadEnv()
 	config.InitLogger()
@@ -97,9 +81,9 @@ func main() {
 
 	db := database.DB
 	mongoDB := database.MongoDB
-
 	seedDatabase(db)
 
+	// 1. Repositories
 	authRepo := repository.NewAuthRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
 	achievementRepo := repository.NewAchievementRepository(db, mongoDB)
@@ -107,24 +91,23 @@ func main() {
 	lecturerRepo := repository.NewLecturerRepository(db)
 	reportRepo := repository.NewReportRepository(db, mongoDB)
 
+	// 2. Services
 	authSvc := service.NewAuthService(authRepo)
 	adminSvc := service.NewAdminService(adminRepo)
-	
-	// Inject studentRepo ke achievementService
-	achievementSvc := service.NewAchievementService(achievementRepo, studentRepo)
 
-	// [FIX] Inject achievementRepo ke studentService
-	studentSvc := service.NewStudentService(studentRepo, achievementRepo)
-	
+	// [FIXED] Menambahkan lecturerRepo sebagai argumen ke-3
+	achievementSvc := service.NewAchievementService(achievementRepo, studentRepo, lecturerRepo)
+
+	// [FIXED] Menambahkan lecturerRepo sebagai argumen ke-3
+	studentSvc := service.NewStudentService(studentRepo, achievementRepo, lecturerRepo)
+
 	lecturerSvc := service.NewLecturerService(lecturerRepo)
-	
-	// [FIX] Inject achievementRepo ke reportService
 	reportSvc := service.NewReportService(reportRepo, achievementRepo)
 
+	// 3. Fiber App
 	app := fiber.New(fiber.Config{
 		AppName: "Sistem Pelaporan Prestasi v1.0",
 	})
-
 	app.Use(logger.New())
 	app.Use(cors.New())
 
@@ -132,12 +115,10 @@ func main() {
 		os.Mkdir("./uploads", 0755)
 	}
 	app.Static("/uploads", "./uploads")
-
 	app.Get("/swagger/*", swagger.HandlerDefault)
 
 	route.InitRoutes(app, authSvc, adminSvc, achievementSvc, studentSvc, lecturerSvc, reportSvc)
 
 	port := config.GetEnv("APP_PORT", "3000")
-	log.Printf("Swagger UI is available at http://localhost:%s/swagger/index.html", port)
 	log.Fatal(app.Listen(":" + port))
 }

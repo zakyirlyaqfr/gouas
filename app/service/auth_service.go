@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"strings"
 )
 
 type AuthService interface {
@@ -71,33 +72,39 @@ func (s *authService) Login(c *fiber.Ctx) error {
 }
 
 func (s *authService) Refresh(c *fiber.Ctx) error {
-	var input struct {
-		RefreshToken string `json:"refreshToken"`
-	}
-	if err := c.BodyParser(&input); err != nil {
-		return c.Status(400).JSON(helper.APIResponse("error", "Invalid input", nil))
+	// 1. Ambil token dari header Authorization
+	authHeader := c.Get("Authorization")
+	if authHeader == "" {
+		return c.Status(401).JSON(helper.APIResponse("error", "Missing Authorization header", nil))
 	}
 
-	// 1. Validasi Token
-	claims, err := helper.ValidateJWT(input.RefreshToken)
+	// 2. Bersihkan string "Bearer " untuk mendapatkan token murni
+	tokenString := strings.Replace(authHeader, "Bearer ", "", 1)
+	if tokenString == "" {
+		return c.Status(401).JSON(helper.APIResponse("error", "Invalid token format", nil))
+	}
+
+	// 3. Validasi Token (Stateless Check)
+	claims, err := helper.ValidateJWT(tokenString)
 	if err != nil {
-		return c.Status(401).JSON(helper.APIResponse("error", "Invalid refresh token", nil))
+		return c.Status(401).JSON(helper.APIResponse("error", "Invalid or expired refresh token", nil))
 	}
 
-	// 2. Cek DB
+	// 4. Cek DB: Pastikan Refresh Token ini yang terdaftar/aktif (Stateful Check)
 	user, err := s.authRepo.FindByID(claims.UserID)
 	if err != nil || user.CurrentRefreshTokenID == nil || *user.CurrentRefreshTokenID != claims.TokenID {
-		return c.Status(401).JSON(helper.APIResponse("error", "Refresh token revoked", nil))
+		return c.Status(401).JSON(helper.APIResponse("error", "Refresh token has been revoked", nil))
 	}
 
-	// 3. Rotasi Access Token ID
+	// 5. Rotasi Access Token ID (Bikin Access Token lama mati)
 	newAccessID := uuid.New()
+	// Gunakan CurrentRefreshTokenID agar refresh token lama tetap valid sampai 24 jam
 	if err := s.authRepo.UpdateTokenIDs(user.ID, &newAccessID, user.CurrentRefreshTokenID); err != nil {
 		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
 	}
 
-	// 4. Generate Access Token Baru
-	permissions := []string{}
+	// 6. Generate Access Token Baru
+	var permissions []string
 	for _, p := range user.Role.Permissions {
 		permissions = append(permissions, p.Name)
 	}
@@ -105,7 +112,7 @@ func (s *authService) Refresh(c *fiber.Ctx) error {
 
 	return c.Status(200).JSON(helper.APIResponse("success", "Token refreshed", fiber.Map{
 		"accessToken":  newAccess,
-		"refreshToken": input.RefreshToken,
+		"refreshToken": tokenString, // Kembalikan token yang sama karena ID-nya belum berubah
 	}))
 }
 

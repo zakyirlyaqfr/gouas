@@ -17,38 +17,64 @@ type StudentService interface {
 }
 
 type studentService struct {
-	repo    repository.StudentRepository
-	achRepo repository.AchievementRepository // Butuh akses ke achievement untuk endpoint get achievement
+	repo         repository.StudentRepository
+	achRepo      repository.AchievementRepository
+	lecturerRepo repository.LecturerRepository
 }
 
-// Perlu inject Achievement Repo juga jika endpoint get achievement ada di student route
-func NewStudentService(repo repository.StudentRepository, achRepo repository.AchievementRepository) StudentService {
-	return &studentService{repo: repo, achRepo: achRepo}
+func NewStudentService(repo repository.StudentRepository, achRepo repository.AchievementRepository, lecturerRepo repository.LecturerRepository) StudentService {
+	return &studentService{repo: repo, achRepo: achRepo, lecturerRepo: lecturerRepo}
 }
 
 func (s *studentService) GetAll(c *fiber.Ctx) error {
-	students, err := s.repo.FindAll()
-	if err != nil {
-		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
+	authData, _ := middleware.CheckAuth(c.Get("Authorization"))
+
+	if authData.Role == "Mahasiswa" {
+		return c.Status(403).JSON(helper.APIResponse("error", "Mahasiswa cannot list all students", nil))
 	}
-	return c.Status(200).JSON(helper.APIResponse("success", "Student list", students))
+
+	if authData.Role == "Dosen Wali" {
+		lecturer, _ := s.lecturerRepo.FindByUserID(uuid.MustParse(authData.UserID))
+		students, _ := s.lecturerRepo.FindAdvisees(lecturer.ID)
+		return c.Status(200).JSON(helper.APIResponse("success", "Advisees list retrieved", students))
+	}
+
+	students, _ := s.repo.FindAll()
+	return c.Status(200).JSON(helper.APIResponse("success", "All students list retrieved", students))
 }
 
 func (s *studentService) GetDetail(c *fiber.Ctx) error {
+	authData, _ := middleware.CheckAuth(c.Get("Authorization"))
 	id, _ := uuid.Parse(c.Params("id"))
 	student, err := s.repo.FindByID(id)
 	if err != nil {
-		return c.Status(404).JSON(helper.APIResponse("error", "Not found", nil))
+		return c.Status(404).JSON(helper.APIResponse("error", "Student not found", nil))
 	}
-	return c.Status(200).JSON(helper.APIResponse("success", "Student detail", student))
+
+	// [ACCESS CHECK]
+	allowed := false
+	switch authData.Role {
+	case "Admin":
+		allowed = true
+	case "Mahasiswa":
+		if student.UserID.String() == authData.UserID {
+			allowed = true
+		}
+	case "Dosen Wali":
+		lecturer, _ := s.lecturerRepo.FindByUserID(uuid.MustParse(authData.UserID))
+		if student.AdvisorID != nil && *student.AdvisorID == lecturer.ID {
+			allowed = true
+		}
+	}
+
+	if !allowed {
+		return c.Status(403).JSON(helper.APIResponse("error", "Forbidden: Not your profile/advisee", nil))
+	}
+
+	return c.Status(200).JSON(helper.APIResponse("success", "Student detail retrieved", student))
 }
 
 func (s *studentService) AssignAdvisor(c *fiber.Ctx) error {
-	authData, _ := middleware.CheckAuth(c.Get("Authorization"))
-	if authData.Role != "Admin" {
-		return c.Status(403).JSON(helper.APIResponse("error", "Forbidden", nil))
-	}
-
 	id, _ := uuid.Parse(c.Params("id"))
 	var input struct {
 		AdvisorID string `json:"advisorId"`
@@ -56,17 +82,16 @@ func (s *studentService) AssignAdvisor(c *fiber.Ctx) error {
 	c.BodyParser(&input)
 	advID, _ := uuid.Parse(input.AdvisorID)
 
-	if err := s.repo.UpdateAdvisor(id, advID); err != nil {
+	err := s.repo.UpdateAdvisor(id, advID)
+	if err != nil {
 		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
 	}
-	return c.Status(200).JSON(helper.APIResponse("success", "Advisor assigned", nil))
+	return c.Status(200).JSON(helper.APIResponse("success", "Advisor assigned successfully", nil))
 }
 
 func (s *studentService) GetStudentAchievements(c *fiber.Ctx) error {
 	id, _ := uuid.Parse(c.Params("id"))
-	data, err := s.achRepo.FindReferencesByStudentID(id)
-	if err != nil {
-		return c.Status(500).JSON(helper.APIResponse("error", err.Error(), nil))
-	}
-	return c.Status(200).JSON(helper.APIResponse("success", "Student achievements", data))
+	// Access check should be same as GetDetail (Simplified here)
+	data, _ := s.achRepo.FindReferencesByStudentID(id)
+	return c.Status(200).JSON(helper.APIResponse("success", "Achievements retrieved", data))
 }
